@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:sync": "tsx scripts/db-sync.ts",
-    "db:seed": "tsx scripts/db-seed.ts"
+    "db:seed": "tsx scripts/db-seed.ts",
+    "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.17",
