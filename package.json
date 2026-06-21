@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "tsx scripts/start.ts",
     "lint": "eslint",
     "db:sync": "tsx scripts/db-sync.ts",
     "db:seed": "tsx scripts/db-seed.ts",

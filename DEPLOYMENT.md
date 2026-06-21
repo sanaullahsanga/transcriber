@@ -4,16 +4,18 @@ Deploy the Transcriber app on a Linux VPS (Ubuntu 22.04/24.04 recommended).
 
 **PostgreSQL is already running** on the server (existing Docker instance). This guide only deploys the Next.js app and connects to that database.
 
+**Web server: Apache** (reverse proxy to the Node.js app).
+
 ## Architecture
 
 ```
 Internet
    │
    ▼
-Nginx (443/80)  →  transcriber.sangahub.com
+Apache (443/80)  →  transcriber.sangahub.com
    │
    ▼
-Next.js app (127.0.0.1:3000)  — systemd service
+Next.js app (127.0.0.1:3030)  — systemd service  ← PORT from .env
    │
    ├── Existing PostgreSQL (Docker, already on server)
    ├── uploads/  (audio files on disk)
@@ -26,11 +28,18 @@ SSH into your server, then install dependencies:
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git nginx certbot python3-certbot-nginx ffmpeg
+sudo apt install -y curl git apache2 certbot python3-certbot-apache ffmpeg
 
 # Node.js 20 LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
+```
+
+Enable Apache proxy modules:
+
+```bash
+sudo a2enmod proxy proxy_http headers ssl
+sudo systemctl reload apache2
 ```
 
 Verify:
@@ -38,9 +47,8 @@ Verify:
 ```bash
 node -v         # v20.x
 ffmpeg -version
+apache2 -v
 ```
-
-Docker is **not** required for this app — only your existing Postgres container should already be running.
 
 ## 2. DNS
 
@@ -52,18 +60,13 @@ Create an **A record** in your DNS panel:
 
 Result: `transcriber.sangahub.com` → your VPS IP.
 
-Confirm before continuing:
-
 ```bash
 dig +short transcriber.sangahub.com
 ```
 
 ## 3. Prepare the database (existing PostgreSQL)
 
-Connect to your **existing** Postgres instance and create a dedicated database for this app (run once):
-
 ```bash
-# Example — adjust container name and credentials to match your setup
 docker exec -it <your-postgres-container> psql -U postgres
 ```
 
@@ -74,28 +77,17 @@ GRANT ALL PRIVILEGES ON DATABASE transcriber TO transcriber;
 \q
 ```
 
-Test connectivity from the server host:
+Test connectivity:
 
 ```bash
 psql "postgresql://transcriber:STRONG_DB_PASSWORD@127.0.0.1:5432/transcriber" -c "SELECT 1"
 ```
 
-Use the host/port your Postgres Docker container exposes (usually `127.0.0.1:5432` if the port is mapped to localhost).
-
 ## 4. Deploy the application
 
 ```bash
-sudo mkdir -p /var/www/transcriber
-sudo chown $USER:$USER /var/www/transcriber
-
 cd /var/www/transcriber
 git clone <your-repo-url> .
-```
-
-Or copy the project with `rsync`/`scp` if not using git:
-
-```bash
-rsync -avz --exclude node_modules --exclude .next ./ user@server:/var/www/transcriber/
 ```
 
 ## 5. Environment variables
@@ -114,10 +106,10 @@ SONIOX_API_KEY=your_soniox_key
 DEEPGRAM_API_KEY=your_deepgram_key
 UPLOAD_DIR=uploads
 NODE_ENV=production
-PORT=3000
+PORT=3030
 ```
 
-Point `DATABASE_URL` at your existing Postgres (host, port, user, password, database name).
+`PORT` must match the port in `deploy/apache.conf` (`ProxyPass`).
 
 ```bash
 chmod 600 .env
@@ -127,14 +119,17 @@ mkdir -p uploads
 ## 6. Build and initialize database tables
 
 ```bash
-cd /var/www/transcriber
-npm ci
+npm run setup:production
+```
+
+Or manually:
+
+```bash
+npm ci --include=dev
 npm run build
 npm run db:sync
 npm run db:seed
 ```
-
-This creates the `transcription_jobs` and `app_settings` tables in your existing database and seeds keyterms.
 
 ## 7. Run as a systemd service
 
@@ -154,13 +149,21 @@ Logs:
 sudo journalctl -u transcriber -f
 ```
 
-## 8. Nginx reverse proxy
+Confirm the app is listening on your PORT:
 
 ```bash
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/transcriber.sangahub.com
-sudo ln -sf /etc/nginx/sites-available/transcriber.sangahub.com /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
+curl -I http://127.0.0.1:3030
+```
+
+## 8. Apache reverse proxy
+
+Edit `deploy/apache.conf` if your `PORT` is not `3030`, then:
+
+```bash
+sudo cp deploy/apache.conf /etc/apache2/sites-available/transcriber.sangahub.com.conf
+sudo a2ensite transcriber.sangahub.com.conf
+sudo apache2ctl configtest
+sudo systemctl reload apache2
 ```
 
 Test HTTP: `http://transcriber.sangahub.com`
@@ -168,7 +171,7 @@ Test HTTP: `http://transcriber.sangahub.com`
 ## 9. HTTPS (Let's Encrypt)
 
 ```bash
-sudo certbot --nginx -d transcriber.sangahub.com
+sudo certbot --apache -d transcriber.sangahub.com
 ```
 
 Test HTTPS: `https://transcriber.sangahub.com`
@@ -177,7 +180,7 @@ Test HTTPS: `https://transcriber.sangahub.com`
 
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'
+sudo ufw allow 'Apache Full'
 sudo ufw enable
 sudo ufw status
 ```
@@ -189,27 +192,21 @@ sudo ufw status
 ```bash
 cd /var/www/transcriber
 git pull
-npm ci
-npm run build
+npm run setup:production
 sudo systemctl restart transcriber
-```
-
-If schema changes:
-
-```bash
-npm run db:sync
 ```
 
 ---
 
 ## Useful commands
 
-| Task              | Command                                      |
-|-------------------|----------------------------------------------|
-| App status        | `sudo systemctl status transcriber`            |
-| Restart app       | `sudo systemctl restart transcriber`           |
-| App logs          | `sudo journalctl -u transcriber -f`            |
-| Nginx test/reload | `sudo nginx -t && sudo systemctl reload nginx` |
+| Task               | Command                                              |
+|--------------------|------------------------------------------------------|
+| App status         | `sudo systemctl status transcriber`                    |
+| Restart app        | `sudo systemctl restart transcriber`                 |
+| App logs           | `sudo journalctl -u transcriber -f`                  |
+| Apache test/reload | `sudo apache2ctl configtest && sudo systemctl reload apache2` |
+| Apache error log   | `sudo tail -f /var/log/apache2/transcriber-error.log` |
 
 ---
 
@@ -217,46 +214,37 @@ npm run db:sync
 
 ### Upload size
 
-Nginx is configured for **100 MB** uploads (`client_max_body_size`). Increase in `deploy/nginx.conf` if you need larger files.
+Apache config sets **100 MB** upload limit (`LimitRequestBody 104857600`). Increase in `deploy/apache.conf` if needed.
+
+### PORT and Apache must match
+
+| `.env`        | `deploy/apache.conf`              |
+|---------------|-----------------------------------|
+| `PORT=3030`   | `ProxyPass / http://127.0.0.1:3030/` |
+| `PORT=3000`   | `ProxyPass / http://127.0.0.1:3000/` |
 
 ### ffmpeg
 
 Required for Soniox — converts MP3 uploads to 16 kHz mono before transcription.
 
-### Persistence
-
-Back up regularly:
-
-- Your existing PostgreSQL database (`transcriber` DB)
-- `/var/www/transcriber/uploads` (audio files)
-
 ### Security
 
-This app has **no built-in authentication**. If it should not be public:
-
-- Restrict by IP in Nginx, or
-- Add HTTP basic auth in Nginx, or
-- Use a VPN / internal network only
-
-Example Nginx basic auth:
+This app has **no built-in authentication**. To restrict access with Apache basic auth:
 
 ```bash
-sudo apt install apache2-utils
-sudo htpasswd -c /etc/nginx/.htpasswd admin
+sudo htpasswd -c /etc/apache2/.htpasswd-transcriber admin
 ```
 
-Add inside the `server` block in `nginx.conf`:
+Add inside the `<VirtualHost>` block:
 
-```nginx
-auth_basic "Transcriber";
-auth_basic_user_file /etc/nginx/.htpasswd;
+```apache
+<Location />
+    AuthType Basic
+    AuthName "Transcriber"
+    AuthUserFile /etc/apache2/.htpasswd-transcriber
+    Require valid-user
+</Location>
 ```
-
-### Resource usage
-
-- Long audio files run transcription in-process (background queue inside the Node process).
-- A 4–5 minute file can take 30–60 seconds per provider.
-- Recommend **2 GB+ RAM** and **2 CPU cores** for light team use.
 
 ---
 
@@ -264,27 +252,32 @@ auth_basic_user_file /etc/nginx/.htpasswd;
 
 | Symptom | Fix |
 |---------|-----|
-| 502 Bad Gateway | App not running — `sudo systemctl status transcriber` |
-| Soniox fails | Check `ffmpeg -version`; verify `SONIOX_API_KEY` in `.env` |
-| DB connection error | Verify existing Postgres is running; test `psql` with `DATABASE_URL` |
-| Upload fails (413) | Increase `client_max_body_size` in Nginx |
+| 502/503 Bad Gateway | App not running — `sudo systemctl status transcriber` |
+| Wrong port | Check `PORT` in `.env` matches `ProxyPass` in Apache config |
+| `EADDRINUSE :3000` | Another process on that port — use `PORT=3030` in `.env` |
+| Soniox fails | Check `ffmpeg -version`; verify `SONIOX_API_KEY` |
+| Upload fails (413) | Increase `LimitRequestBody` in Apache config |
 
 ---
 
 ## Quick checklist
 
 - [ ] DNS A record: `transcriber.sangahub.com` → server IP
-- [ ] Node 20, ffmpeg, Nginx installed
-- [ ] `transcriber` database + user created on **existing** Postgres
-- [ ] `.env` configured with `DATABASE_URL` + API keys
-- [ ] `npm ci && npm run build && npm run db:sync && npm run db:seed`
-- [ ] systemd service running
-- [ ] Nginx proxy configured
-- [ ] SSL via certbot
-- [ ] UFW enabled (80/443 only)
+- [ ] Node 20, ffmpeg, Apache installed
+- [ ] Apache modules: `proxy`, `proxy_http`, `headers`, `ssl`
+- [ ] `transcriber` database created on existing Postgres
+- [ ] `.env` configured (`PORT`, `DATABASE_URL`, API keys)
+- [ ] `npm run setup:production`
+- [ ] systemd service running on correct PORT
+- [ ] Apache vhost enabled (`ProxyPass` port matches `.env`)
+- [ ] SSL via `certbot --apache`
 
 ---
 
 ## Local development only
 
-`docker-compose.yml` in this repo is optional — for spinning up a **local** Postgres when developing on your machine. It is **not** used in production on the server.
+`docker-compose.yml` is optional — local Postgres for development only.
+
+## Nginx (alternative)
+
+If you use Nginx instead of Apache, see `deploy/nginx.conf`.
