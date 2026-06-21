@@ -12,6 +12,7 @@ export async function GET() {
     const prompt = await getSttAnalysisSystemPrompt();
     return NextResponse.json({
       prompt,
+      defaultPrompt: DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
       isDefault: prompt === DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
     });
   } catch (error) {

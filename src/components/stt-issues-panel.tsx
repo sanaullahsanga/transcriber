@@ -7,12 +7,14 @@ import {
   Loader2,
   RefreshCw,
   ScanSearch,
+  Settings2,
   Sparkles,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label, Textarea } from "@/components/ui/input";
 import { formatDate } from "@/lib/utils";
 
 type SttIssue = {
@@ -85,6 +87,19 @@ export function SttIssuesPanel() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
+
+  const loadPrompt = useCallback(async () => {
+    const res = await fetch("/api/settings/stt-prompt");
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Failed to load prompt");
+    setSystemPrompt(json.prompt ?? "");
+    setDefaultPrompt(json.defaultPrompt ?? "");
+  }, []);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/stt-analysis");
@@ -93,9 +108,13 @@ export function SttIssuesPanel() {
     setData(json);
   }, []);
 
+  const loadAll = useCallback(async () => {
+    await Promise.all([load(), loadPrompt()]);
+  }, [load, loadPrompt]);
+
   useEffect(() => {
-    void load().catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
-  }, [load]);
+    void loadAll().catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
+  }, [loadAll]);
 
   const hasActive = data?.items.some(
     (item) =>
@@ -179,6 +198,34 @@ export function SttIssuesPanel() {
     await load();
   };
 
+  const savePrompt = async () => {
+    setSavingPrompt(true);
+    setPromptSaved(false);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings/stt-prompt", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: systemPrompt }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to save prompt");
+      setSystemPrompt(json.prompt);
+      setPromptSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save prompt");
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const resetPrompt = () => {
+    if (defaultPrompt) {
+      setSystemPrompt(defaultPrompt);
+      setPromptSaved(false);
+    }
+  };
+
   if (!data) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
@@ -202,6 +249,62 @@ export function SttIssuesPanel() {
           {error}
         </div>
       )}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-5 w-5 text-violet-400" />
+              LLM analysis prompt
+            </CardTitle>
+            <CardDescription>
+              System instructions for STT issue detection. Stored in the database.
+            </CardDescription>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowPromptEditor((open) => !open)}
+          >
+            {showPromptEditor ? "Hide" : "Edit prompt"}
+          </Button>
+        </CardHeader>
+
+        {showPromptEditor && (
+          <div className="space-y-3 border-t border-white/5 pt-4">
+            <div className="space-y-2">
+              <Label>System prompt</Label>
+              <Textarea
+                value={systemPrompt}
+                onChange={(e) => {
+                  setSystemPrompt(e.target.value);
+                  setPromptSaved(false);
+                }}
+                className="min-h-[220px] font-mono text-xs leading-relaxed"
+                placeholder="Instructions for the LLM..."
+              />
+              <p className="text-xs text-zinc-500">
+                Keep JSON output format with summary, qualityScore, and issues so results parse correctly.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => void savePrompt()} disabled={savingPrompt || !systemPrompt.trim()}>
+                {savingPrompt ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Save prompt
+              </Button>
+              <Button variant="secondary" size="sm" onClick={resetPrompt} disabled={!defaultPrompt}>
+                Reset to default
+              </Button>
+              {promptSaved && (
+                <span className="flex items-center gap-1 text-xs text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Saved
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
         <Card>
