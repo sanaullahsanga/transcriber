@@ -9,12 +9,15 @@ import {
   Loader2,
   Mic,
   RefreshCw,
+  ScanSearch,
   Settings2,
   Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
 import { BenchmarkPanel } from "@/components/benchmark-panel";
+import { AudioPlayer } from "@/components/audio-player";
+import { SttIssuesPanel } from "@/components/stt-issues-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -260,6 +263,10 @@ export function TranscriberApp() {
             <TabsTrigger value="benchmark">
               <BarChart3 className="h-4 w-4" />
               Benchmark
+            </TabsTrigger>
+            <TabsTrigger value="stt-issues">
+              <ScanSearch className="h-4 w-4" />
+              STT Issues
             </TabsTrigger>
           </TabsList>
 
@@ -531,48 +538,54 @@ export function TranscriberApp() {
                       </div>
                     </button>
 
-                    {expandedJob === job.id && job.transcript && (
+                    {expandedJob === job.id && (
                       <div className="border-t border-white/5 px-4 pb-4">
-                        <div className="mb-2 flex justify-end gap-2 pt-3">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => void retryJob(job.id)}
-                          >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                            Retranscribe
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => void copyTranscript(job.transcript!)}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                            Copy
-                          </Button>
-                          <Button variant="danger" size="sm" onClick={() => void deleteJob(job.id)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </Button>
+                        <div className="pt-3">
+                          <AudioPlayer jobId={job.id} filename={job.originalFilename} />
                         </div>
-                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-black/30 p-4 text-sm leading-relaxed text-zinc-200">
-                          {job.transcript}
-                        </pre>
-                      </div>
-                    )}
 
-                    {expandedJob === job.id && !job.transcript && job.status === "failed" && (
-                      <div className="border-t border-white/5 px-4 pb-4 pt-3">
-                        <div className="flex gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => void retryJob(job.id)}>
-                            <RefreshCw className="h-3.5 w-3.5" />
-                            Retry
-                          </Button>
-                          <Button variant="danger" size="sm" onClick={() => void deleteJob(job.id)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </Button>
-                        </div>
+                        {(job.transcript || job.status === "completed" || job.status === "failed") && (
+                          <div className="mb-2 mt-3 flex justify-end gap-2">
+                            {(job.transcript || job.status === "completed") && (
+                              <>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => void retryJob(job.id)}
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                  Retranscribe
+                                </Button>
+                                {job.transcript && (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => void copyTranscript(job.transcript!)}
+                                  >
+                                    <Copy className="h-3.5 w-3.5" />
+                                    Copy
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            {job.status === "failed" && !job.transcript && (
+                              <Button variant="secondary" size="sm" onClick={() => void retryJob(job.id)}>
+                                <RefreshCw className="h-3.5 w-3.5" />
+                                Retry
+                              </Button>
+                            )}
+                            <Button variant="danger" size="sm" onClick={() => void deleteJob(job.id)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </Button>
+                          </div>
+                        )}
+
+                        {job.transcript && (
+                          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-black/30 p-4 text-sm leading-relaxed text-zinc-200">
+                            {job.transcript}
+                          </pre>
+                        )}
                       </div>
                     )}
                   </div>
@@ -593,6 +606,10 @@ export function TranscriberApp() {
                 language: settings.language,
               }}
             />
+          </TabsContent>
+
+          <TabsContent value="stt-issues">
+            <SttIssuesPanel />
           </TabsContent>
         </Tabs>
       </div>

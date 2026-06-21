@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT } from "@/lib/llm/default-stt-prompt";
 import { AppSettings, initDb } from "@/lib/models";
 import { getProvider, resolveModel } from "@/lib/providers";
 
@@ -34,6 +35,8 @@ export async function PUT(request: NextRequest) {
           .map((t: string) => t.trim())
           .filter(Boolean);
 
+    const existing = await AppSettings.findByPk(1);
+
     const [, settings] = await AppSettings.upsert({
       id: 1,
       defaultProvider: provider,
@@ -42,6 +45,8 @@ export async function PUT(request: NextRequest) {
       speakerDiarization: body.speakerDiarization !== false,
       keyterms,
       language: String(body.language ?? "en"),
+      sttAnalysisSystemPrompt:
+        existing?.sttAnalysisSystemPrompt?.trim() || DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
     });
 
     const saved = settings ?? (await AppSettings.findByPk(1));

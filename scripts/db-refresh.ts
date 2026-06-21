@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { sequelize } from "../src/lib/db";
+import { DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT } from "../src/lib/llm/default-stt-prompt";
 import { getSessionKeyterms } from "../src/lib/keyterms";
 import { AppSettings } from "../src/lib/models";
 
@@ -20,6 +21,7 @@ async function main() {
     speakerDiarization: true,
     keyterms,
     language: "en",
+    sttAnalysisSystemPrompt: DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
   });
 
   console.log(`Database refreshed and seeded with ${keyterms.length} keyterms.`);

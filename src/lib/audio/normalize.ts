@@ -88,6 +88,7 @@ export async function prepareAudioForStt(
     filename: path.basename(originalFilename, path.extname(originalFilename)) + ".mp3",
     mimeType: "audio/mpeg",
     cleanup: async () => {
+      // Only removes ffmpeg temp dir — original upload in UPLOAD_DIR is never deleted.
       await rm(tempDir, { recursive: true, force: true });
     },
   };

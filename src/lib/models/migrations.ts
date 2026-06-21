@@ -1,4 +1,5 @@
 import { DataTypes } from "sequelize";
+import { DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT } from "../llm/default-stt-prompt";
 import { sequelize } from "../db";
 
 async function tableExists(tableName: string): Promise<boolean> {
@@ -33,5 +34,16 @@ export async function applySchemaPatches() {
       type: DataTypes.INTEGER,
       allowNull: true,
     });
+  }
+
+  if (await tableExists("app_settings")) {
+    const settingsColumns = await qi.describeTable("app_settings");
+    if (!settingsColumns.sttAnalysisSystemPrompt) {
+      await qi.addColumn("app_settings", "sttAnalysisSystemPrompt", {
+        type: DataTypes.TEXT,
+        allowNull: false,
+        defaultValue: DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
+      });
+    }
   }
 }

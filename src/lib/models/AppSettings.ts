@@ -18,6 +18,7 @@ export class AppSettings extends Model<
   declare speakerDiarization: boolean;
   declare keyterms: string[];
   declare language: string;
+  declare sttAnalysisSystemPrompt: string;
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 }
@@ -58,6 +59,11 @@ AppSettings.init(
       type: DataTypes.STRING,
       allowNull: false,
       defaultValue: "en",
+    },
+    sttAnalysisSystemPrompt: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      defaultValue: "",
     },
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,

@@ -1,16 +1,26 @@
 import { sequelize } from "../db";
+import { DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT } from "../llm/default-stt-prompt";
 import { getSessionKeyterms } from "../keyterms";
 import { AppSettings } from "./AppSettings";
 import { BenchmarkRun } from "./BenchmarkRun";
 import { applySchemaPatches } from "./migrations";
+import { SttAnalysis } from "./SttAnalysis";
 import { TranscriptionJob } from "./TranscriptionJob";
 
-export { AppSettings, BenchmarkRun, TranscriptionJob };
+export { AppSettings, BenchmarkRun, SttAnalysis, TranscriptionJob };
 export type { BenchmarkSlotConfig } from "./BenchmarkRun";
 export type { JobOptions, JobStatus } from "./TranscriptionJob";
+export type {
+  AnalysisStatus,
+  SttIssue,
+  SttIssueCategory,
+  SttIssueSeverity,
+} from "./SttAnalysis";
 
 BenchmarkRun.hasMany(TranscriptionJob, { foreignKey: "benchmarkRunId", as: "jobs" });
 TranscriptionJob.belongsTo(BenchmarkRun, { foreignKey: "benchmarkRunId", as: "benchmarkRun" });
+TranscriptionJob.hasOne(SttAnalysis, { foreignKey: "jobId", as: "sttAnalysis" });
+SttAnalysis.belongsTo(TranscriptionJob, { foreignKey: "jobId", as: "job" });
 
 let synced = false;
 
@@ -38,9 +48,15 @@ export async function initDb(options?: InitDbOptions) {
       speakerDiarization: true,
       keyterms: defaultKeyterms,
       language: "en",
+      sttAnalysisSystemPrompt: DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT,
     });
-  } else if (!existing.keyterms?.length) {
-    await existing.update({ keyterms: defaultKeyterms });
+  } else {
+    if (!existing.keyterms?.length) {
+      await existing.update({ keyterms: defaultKeyterms });
+    }
+    if (!existing.sttAnalysisSystemPrompt?.trim()) {
+      await existing.update({ sttAnalysisSystemPrompt: DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT });
+    }
   }
 
   synced = true;

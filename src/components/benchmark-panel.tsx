@@ -14,6 +14,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { AudioPlayer } from "@/components/audio-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -521,7 +522,7 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
 
               {activeRun && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-4">
                     <div className="text-sm text-zinc-400">
                       <span className="text-zinc-200">{activeRun.originalFilename}</span>
                       <span className="mx-2">·</span>
@@ -532,6 +533,13 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                       Delete
                     </Button>
                   </div>
+
+                  {activeRun.jobs[0]?.id && (
+                    <AudioPlayer
+                      jobId={activeRun.jobs[0].id}
+                      filename={activeRun.originalFilename}
+                    />
+                  )}
 
                   <div
                     className="grid gap-4"
