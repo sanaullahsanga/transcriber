@@ -35,20 +35,23 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1091
-set -a && source .env && set +a
-
-if [[ -z "${DATABASE_URL:-}" ]]; then
+if ! grep -q '^DATABASE_URL=' .env; then
   echo "ERROR: DATABASE_URL is not set in .env"
   exit 1
 fi
 
 # --- dirs ---
-mkdir -p "${UPLOAD_DIR:-uploads}"
+mkdir -p uploads
 chmod 700 .env 2>/dev/null || true
 
-echo "==> Installing dependencies"
-npm ci
+echo "==> Installing dependencies (devDependencies required for build)"
+# Do not source .env yet — NODE_ENV=production would skip devDependencies
+npm ci --include=dev
+
+# Load .env for build and database steps
+# shellcheck disable=SC1091
+set -a && source .env && set +a
+mkdir -p "${UPLOAD_DIR:-uploads}"
 
 echo "==> Building Next.js app"
 npm run build
