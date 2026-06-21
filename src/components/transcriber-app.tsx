@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   CheckCircle2,
   Copy,
   FileAudio,
@@ -13,6 +14,8 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
+import { BenchmarkPanel } from "@/components/benchmark-panel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -221,7 +224,7 @@ export function TranscriberApp() {
 
   return (
     <div className="min-h-screen">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1800px] px-3 py-6 sm:px-4">
         <header className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300 ring-1 ring-violet-500/20">
@@ -248,14 +251,27 @@ export function TranscriberApp() {
           </div>
         </header>
 
-        {error && (
-          <div className="mb-6 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-            <XCircle className="h-4 w-4 shrink-0" />
-            {error}
-          </div>
-        )}
+        <Tabs defaultValue="transcribe" className="w-full">
+          <TabsList>
+            <TabsTrigger value="transcribe">
+              <Mic className="h-4 w-4" />
+              Transcribe
+            </TabsTrigger>
+            <TabsTrigger value="benchmark">
+              <BarChart3 className="h-4 w-4" />
+              Benchmark
+            </TabsTrigger>
+          </TabsList>
 
-        <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+          <TabsContent value="transcribe">
+            {error && (
+              <div className="mb-6 flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                <XCircle className="h-4 w-4 shrink-0" />
+                {error}
+              </div>
+            )}
+
+            <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
           <div className="space-y-6">
             <Card>
               <CardHeader>
@@ -562,7 +578,21 @@ export function TranscriberApp() {
               </div>
             )}
           </Card>
-        </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="benchmark">
+            <BenchmarkPanel
+              providers={providers}
+              settings={{
+                normalizeAudio: settings.normalizeAudio,
+                speakerDiarization: settings.speakerDiarization,
+                keyterms: settings.keyterms,
+                language: settings.language,
+              }}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

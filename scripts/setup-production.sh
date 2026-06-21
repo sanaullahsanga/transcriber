@@ -41,17 +41,28 @@ if ! grep -q '^DATABASE_URL=' .env; then
 fi
 
 # --- dirs ---
-mkdir -p uploads
-chmod 700 .env 2>/dev/null || true
-
-echo "==> Installing dependencies (devDependencies required for build)"
-# Do not source .env yet — NODE_ENV=production would skip devDependencies
-npm ci --include=dev
-
-# Load .env for build and database steps
 # shellcheck disable=SC1091
 set -a && source .env && set +a
-mkdir -p "${UPLOAD_DIR:-uploads}"
+
+PROJECT_ROOT="${PROJECT_ROOT:-$ROOT}"
+UPLOAD_DIR="${UPLOAD_DIR:-$ROOT/uploads}"
+if [[ "$UPLOAD_DIR" != /* ]]; then
+  UPLOAD_DIR="$ROOT/$UPLOAD_DIR"
+fi
+
+mkdir -p "$UPLOAD_DIR"
+chmod 700 .env 2>/dev/null || true
+
+# Ensure production .env has stable absolute paths
+if ! grep -q '^PROJECT_ROOT=' .env 2>/dev/null; then
+  echo "PROJECT_ROOT=$ROOT" >> .env
+fi
+if ! grep -q '^UPLOAD_DIR=' .env 2>/dev/null; then
+  echo "UPLOAD_DIR=$UPLOAD_DIR" >> .env
+fi
+
+echo "==> Installing dependencies (devDependencies required for build)"
+npm ci --include=dev
 
 echo "==> Building Next.js app"
 npm run build

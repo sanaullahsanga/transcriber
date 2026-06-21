@@ -2,18 +2,18 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { initDb, TranscriptionJob } from "@/lib/models";
+import { getUploadDir } from "@/lib/paths";
 import { resolveModel } from "@/lib/providers";
-import { enqueueJobs } from "@/lib/queue";
+import { enqueueJobs, ensureQueueRunning } from "@/lib/queue";
 import type { JobOptions } from "@/lib/models/TranscriptionJob";
 
 export const runtime = "nodejs";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "uploads";
-
 export async function POST(request: NextRequest) {
   try {
     await initDb();
-    await mkdir(UPLOAD_DIR, { recursive: true });
+    const uploadDir = getUploadDir();
+    await mkdir(uploadDir, { recursive: true });
 
     const formData = await request.formData();
     const files = formData.getAll("files").filter((f): f is File => f instanceof File);
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer());
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storedName = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
-      const storedPath = path.join(UPLOAD_DIR, storedName);
+      const storedPath = path.join(uploadDir, storedName);
 
       await writeFile(storedPath, buffer);
 
@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     enqueueJobs(jobs.map((j) => j.id));
+    ensureQueueRunning();
 
     return NextResponse.json({
       jobs: jobs.map((job) => ({

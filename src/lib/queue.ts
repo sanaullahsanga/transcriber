@@ -1,8 +1,19 @@
 import { TranscriptionJob, initDb } from "./models";
+import { assertAudioFileExists } from "./paths";
 import { transcribeAudio } from "./transcription";
 
 let processing = false;
 let wakeScheduled = false;
+let queueBootstrapped = false;
+
+export function ensureQueueRunning() {
+  if (queueBootstrapped) {
+    scheduleProcessing();
+    return;
+  }
+  queueBootstrapped = true;
+  scheduleProcessing();
+}
 
 export function enqueueJob(jobId: string) {
   scheduleProcessing();
@@ -39,11 +50,13 @@ async function processQueue() {
 
       if (!job) break;
 
-      await job.update({ status: "processing", errorMessage: null });
+      await job.update({ status: "processing", errorMessage: null, processingMs: null });
+      const startedAt = Date.now();
 
       try {
+        const filePath = await assertAudioFileExists(job.storedPath);
         const result = await transcribeAudio({
-          filePath: job.storedPath,
+          filePath,
           filename: job.originalFilename,
           mimeType: job.mimeType,
           provider: job.provider,
@@ -55,6 +68,7 @@ async function processQueue() {
           status: "completed",
           transcript: result.text,
           durationMs: result.durationMs ?? null,
+          processingMs: Date.now() - startedAt,
           completedAt: new Date(),
           errorMessage: null,
         });
@@ -63,6 +77,7 @@ async function processQueue() {
         await job.update({
           status: "failed",
           errorMessage: message,
+          processingMs: Date.now() - startedAt,
           completedAt: new Date(),
         });
       }

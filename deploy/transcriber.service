@@ -18,6 +18,8 @@ Type=simple
 User=root
 WorkingDirectory=/var/www/transcriber
 Environment=NODE_ENV=production
+Environment=PROJECT_ROOT=/var/www/transcriber
+Environment=UPLOAD_DIR=/var/www/transcriber/uploads
 Environment=PATH=/root/.nvm/versions/node/v24.12.0/bin:/usr/bin:/bin
 EnvironmentFile=/var/www/transcriber/.env
 ExecStart=/root/.nvm/versions/node/v24.12.0/bin/npm run start

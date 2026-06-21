@@ -3,7 +3,7 @@ import { initDb } from "../src/lib/models";
 
 async function main() {
   console.log("Syncing database...");
-  await initDb();
+  await initDb({ forceAlter: true });
   console.log("Database synced successfully.");
   process.exit(0);
 }

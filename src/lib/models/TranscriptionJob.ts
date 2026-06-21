@@ -32,6 +32,9 @@ export class TranscriptionJob extends Model<
   declare errorMessage: string | null;
   declare options: JobOptions;
   declare durationMs: number | null;
+  declare processingMs: number | null;
+  declare benchmarkRunId: string | null;
+  declare slotIndex: number | null;
   declare completedAt: Date | null;
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
@@ -96,6 +99,18 @@ TranscriptionJob.init(
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    processingMs: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    benchmarkRunId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    slotIndex: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     completedAt: {
       type: DataTypes.DATE,
       allowNull: true,
@@ -106,6 +121,10 @@ TranscriptionJob.init(
   {
     sequelize,
     tableName: "transcription_jobs",
-    indexes: [{ fields: ["status"] }, { fields: ["createdAt"] }],
+    indexes: [
+      { fields: ["status"] },
+      { fields: ["createdAt"] },
+      { fields: ["benchmarkRunId"] },
+    ],
   },
 );

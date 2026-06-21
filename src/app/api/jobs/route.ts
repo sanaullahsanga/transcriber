@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Op } from "sequelize";
 import { initDb, TranscriptionJob } from "@/lib/models";
+import { ensureQueueRunning } from "@/lib/queue";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
     await initDb();
+    ensureQueueRunning();
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const limit = Math.min(Number(searchParams.get("limit") ?? 50), 100);
 
-    const where = status ? { status } : undefined;
+    const where = {
+      ...(status ? { status } : {}),
+      benchmarkRunId: { [Op.is]: null },
+    };
 
     const jobs = await TranscriptionJob.findAll({
       where,
@@ -31,6 +37,7 @@ export async function GET(request: NextRequest) {
         errorMessage: job.errorMessage,
         options: job.options,
         durationMs: job.durationMs,
+        processingMs: job.processingMs,
         createdAt: job.createdAt,
         updatedAt: job.updatedAt,
         completedAt: job.completedAt,
