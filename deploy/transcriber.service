@@ -5,6 +5,9 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable transcriber
 #   sudo systemctl start transcriber
+#
+# NOTE: Update NODE_BIN path if Node is installed elsewhere (e.g. nvm).
+# Find with: which node
 
 [Unit]
 Description=Transcriber Next.js App
@@ -12,12 +15,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=root
 WorkingDirectory=/var/www/transcriber
 Environment=NODE_ENV=production
+Environment=PATH=/root/.nvm/versions/node/v24.12.0/bin:/usr/bin:/bin
 EnvironmentFile=/var/www/transcriber/.env
-ExecStart=/usr/bin/npm run start
+ExecStart=/root/.nvm/versions/node/v24.12.0/bin/npm run start
 Restart=on-failure
 RestartSec=10
 
