@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Transcriber
 
-## Getting Started
+A Next.js audio transcription app with a modern UI. Upload single or multiple audio files, choose your STT provider and model from the UI, and get transcripts as background jobs complete.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router)
+- **Sequelize** + **PostgreSQL**
+- **Providers**: Soniox, Deepgram
+
+## Quick start (local dev)
+
+For local development you can optionally start Postgres with Docker:
+
+```bash
+docker compose up -d
+```
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and add API keys for the providers you plan to use:
+
+```env
+DATABASE_URL=postgresql://transcriber:transcriber@localhost:5432/transcriber
+SONIOX_API_KEY=your_key
+DEEPGRAM_API_KEY=your_key
+```
+
+### 2. Sync database & seed keyterms
+
+```bash
+npm run db:sync
+npm run db:seed
+```
+
+`db:seed` loads **166 domain keyterms** from IT_Curves_Bot (`src/data/keyterms.json`) into default app settings.
+
+### 3. Run the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Production deployment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full server setup at `https://transcriber.sangahub.com`.
 
-## Learn More
+## Features
 
-To learn more about Next.js, take a look at the following resources:
+- Upload one or many audio files (mp3, wav, m4a, flac, ogg, webm)
+- Choose provider and model from the UI
+- Toggle speaker diarization (Agent/Caller dialogue format)
+- Custom keyterms for better accuracy
+- Background processing — jobs continue after upload
+- Live status updates on the jobs panel
+- Copy transcript, retry failed jobs, delete jobs
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API routes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/upload` | POST | Upload audio files and enqueue jobs |
+| `/api/jobs` | GET | List all transcription jobs |
+| `/api/jobs/[id]` | GET/DELETE | Get or delete a job |
+| `/api/jobs/[id]/retry` | POST | Retry a failed job |
+| `/api/providers` | GET | List providers and configuration status |
+| `/api/settings` | GET/PUT | Default transcription settings |
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/           # Next.js pages and API routes
+  components/    # UI components
+  lib/
+    models/      # Sequelize models
+    transcription/  # Provider implementations
+    queue.ts     # Background job processor
+```

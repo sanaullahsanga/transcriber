@@ -1,0 +1,25 @@
+# /etc/systemd/system/transcriber.service
+#
+# Install:
+#   sudo cp deploy/transcriber.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable transcriber
+#   sudo systemctl start transcriber
+
+[Unit]
+Description=Transcriber Next.js App
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/transcriber
+Environment=NODE_ENV=production
+EnvironmentFile=/var/www/transcriber/.env
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
