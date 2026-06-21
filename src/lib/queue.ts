@@ -1,5 +1,5 @@
 import { TranscriptionJob, initDb } from "./models";
-import { assertAudioFileExists } from "./paths";
+import { ensureJobAudioFile } from "./job-audio";
 import { transcribeAudio } from "./transcription";
 
 let processing = false;
@@ -54,7 +54,7 @@ async function processQueue() {
       const startedAt = Date.now();
 
       try {
-        const filePath = await assertAudioFileExists(job.storedPath);
+        const filePath = await ensureJobAudioFile(job);
         const result = await transcribeAudio({
           filePath,
           filename: job.originalFilename,

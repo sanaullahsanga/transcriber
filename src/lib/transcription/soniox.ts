@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { SonioxNodeClient } from "@soniox/node";
 import { prepareAudioForStt } from "../audio/normalize";
 import { buildSonioxContext } from "./soniox-context";
+import { createSonioxClient, SONIOX_WAIT_TIMEOUT_MS } from "./soniox-client";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 
 function speakerLabels(speakers: string[]): Record<string, string> {
@@ -64,7 +64,7 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
     );
 
     try {
-      const client = new SonioxNodeClient({ api_key: apiKey });
+      const client = createSonioxClient();
       const file = await readFile(prepared.filePath);
 
       const transcription = await client.stt.transcribe({
@@ -72,9 +72,8 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
         file,
         filename: prepared.filename,
         wait: true,
-        cleanup: ["file"],
-        timeout_ms: 600_000,
-        wait_options: { timeout_ms: 600_000 },
+        timeout_ms: SONIOX_WAIT_TIMEOUT_MS,
+        wait_options: { timeout_ms: SONIOX_WAIT_TIMEOUT_MS },
         language_hints: [input.options.language],
         language_hints_strict: true,
         enable_language_identification: false,

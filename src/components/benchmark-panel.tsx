@@ -240,6 +240,11 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
     }
   };
 
+  const retryJob = async (id: string) => {
+    await fetch(`/api/jobs/${id}/retry`, { method: "POST" });
+    await loadRuns();
+  };
+
   const deleteRun = async (id: string) => {
     await fetch(`/api/benchmark/${id}`, { method: "DELETE" });
     if (activeRunId === id) setActiveRunId(null);
@@ -561,10 +566,26 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                               <Loader2 className="h-6 w-6 animate-spin text-sky-400" />
                             </div>
                           ) : job.status === "failed" ? (
-                            <p className="text-sm text-rose-300">{job.errorMessage ?? "Failed"}</p>
+                            <div className="flex flex-1 flex-col">
+                              <p className="text-sm text-rose-300">{job.errorMessage ?? "Failed"}</p>
+                              <div className="mt-3">
+                                <Button variant="secondary" size="sm" onClick={() => void retryJob(job.id)}>
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                  Retry
+                                </Button>
+                              </div>
+                            </div>
                           ) : job.transcript ? (
                             <>
-                              <div className="mb-2 flex justify-end">
+                              <div className="mb-2 flex justify-end gap-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => void retryJob(job.id)}
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                  Retranscribe
+                                </Button>
                                 <Button
                                   variant="secondary"
                                   size="sm"

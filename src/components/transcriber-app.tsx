@@ -537,17 +537,19 @@ export function TranscriberApp() {
                           <Button
                             variant="secondary"
                             size="sm"
+                            onClick={() => void retryJob(job.id)}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Retranscribe
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             onClick={() => void copyTranscript(job.transcript!)}
                           >
                             <Copy className="h-3.5 w-3.5" />
                             Copy
                           </Button>
-                          {job.status === "failed" && (
-                            <Button variant="secondary" size="sm" onClick={() => void retryJob(job.id)}>
-                              <RefreshCw className="h-3.5 w-3.5" />
-                              Retry
-                            </Button>
-                          )}
                           <Button variant="danger" size="sm" onClick={() => void deleteJob(job.id)}>
                             <Trash2 className="h-3.5 w-3.5" />
                             Delete
