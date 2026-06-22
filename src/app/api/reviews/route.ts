@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReviewableCalls, getReviewDashboard, saveReview } from "@/lib/reviews";
+import { parsePaginationParams } from "@/lib/pagination";
 
 export const runtime = "nodejs";
 
@@ -11,9 +12,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(dashboard);
     }
 
-    const calls = await getReviewableCalls();
+    const { limit, offset } = parsePaginationParams(new URL(request.url).searchParams);
+    const { calls, pagination } = await getReviewableCalls({ limit, offset });
     const dashboard = await getReviewDashboard();
-    return NextResponse.json({ calls, dashboard });
+    return NextResponse.json({ calls, dashboard, pagination });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch reviews";
     return NextResponse.json({ error: message }, { status: 500 });

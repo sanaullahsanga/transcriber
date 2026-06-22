@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   CheckCircle2,
@@ -17,8 +17,10 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { Label, Textarea } from "@/components/ui/input";
 import { ListSearch } from "@/components/ui/list-search";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { formatDate } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
+import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
 import { computeWordErrorRate } from "@/lib/wer";
 
 type WerMetrics = {
@@ -86,13 +88,25 @@ export function ReviewPanel() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [callSearch, setCallSearch] = useState("");
+  const [callPagination, setCallPagination] = useState<PaginationMeta | null>(null);
+  const [loadingMoreCalls, setLoadingMoreCalls] = useState(false);
+  const callsLengthRef = useRef(0);
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/reviews");
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Failed to load reviews");
-    setCalls(json.calls ?? []);
-    setDashboard(json.dashboard ?? null);
+  callsLengthRef.current = calls.length;
+
+  const load = useCallback(async (append = false) => {
+    if (append) setLoadingMoreCalls(true);
+    try {
+      const offset = append ? callsLengthRef.current : 0;
+      const res = await fetch(`/api/reviews?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to load reviews");
+      setCalls((prev) => (append ? [...prev, ...(json.calls ?? [])] : (json.calls ?? [])));
+      setDashboard(json.dashboard ?? null);
+      setCallPagination(json.pagination ?? null);
+    } finally {
+      if (append) setLoadingMoreCalls(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -347,6 +361,13 @@ export function ReviewPanel() {
                 </button>
               ))
             )}
+          </div>
+          <div className="px-4 pb-4">
+            <ListPagination
+              pagination={callPagination}
+              loading={loadingMoreCalls}
+              onLoadMore={() => void load(true)}
+            />
           </div>
         </Card>
 

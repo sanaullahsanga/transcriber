@@ -20,10 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { ListSearch } from "@/components/ui/list-search";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
+import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
 
 type ProviderInfo = {
   id: string;
@@ -105,15 +107,27 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runSearch, setRunSearch] = useState("");
+  const [runPagination, setRunPagination] = useState<PaginationMeta | null>(null);
+  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const runsLengthRef = useRef(0);
+
+  runsLengthRef.current = runs.length;
 
   const configuredProviders = providers.filter((p) => p.configured);
 
-  const loadRuns = useCallback(async () => {
-    const res = await fetch("/api/benchmark");
-    const data = await res.json();
-    setRuns(data.runs ?? []);
+  const loadRuns = useCallback(async (append = false) => {
+    if (append) setLoadingMoreRuns(true);
+    try {
+      const offset = append ? runsLengthRef.current : 0;
+      const res = await fetch(`/api/benchmark?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const data = await res.json();
+      setRuns((prev) => (append ? [...prev, ...(data.runs ?? [])] : (data.runs ?? [])));
+      setRunPagination(data.pagination ?? null);
+    } finally {
+      if (append) setLoadingMoreRuns(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -549,6 +563,12 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                 })}
                 </div>
               )}
+
+              <ListPagination
+                pagination={runPagination}
+                loading={loadingMoreRuns}
+                onLoadMore={() => void loadRuns(true)}
+              />
 
               {activeRun && (
                 <div className="space-y-4">

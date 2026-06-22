@@ -6,14 +6,39 @@ import {
   type CallReviewMetrics,
 } from "./review-metrics";
 import { BenchmarkRun, CallReview, initDb, TranscriptionJob } from "./models";
+import { buildPaginationMeta } from "./pagination";
 
-export async function getReviewableCalls() {
+type ReviewableEntry = {
+  benchmarkRunId?: string;
+  transcriptionJobId?: string;
+  originalFilename: string;
+  createdAt: Date;
+};
+
+async function listReviewableEntries(): Promise<ReviewableEntry[]> {
   await initDb();
 
   const benchmarkRuns = await BenchmarkRun.findAll({
     order: [["createdAt", "DESC"]],
-    limit: 100,
+    attributes: ["id", "originalFilename", "createdAt"],
   });
+
+  const entries: ReviewableEntry[] = [];
+
+  for (const run of benchmarkRuns) {
+    const jobs = await TranscriptionJob.findAll({
+      where: { benchmarkRunId: run.id },
+      attributes: ["status", "transcript"],
+    });
+    const hasCompleted = jobs.some((j) => j.status === "completed" && j.transcript?.trim());
+    if (!hasCompleted) continue;
+
+    entries.push({
+      benchmarkRunId: run.id,
+      originalFilename: run.originalFilename,
+      createdAt: run.createdAt,
+    });
+  }
 
   const singleJobs = await TranscriptionJob.findAll({
     where: {
@@ -22,8 +47,26 @@ export async function getReviewableCalls() {
       transcript: { [Op.ne]: null },
     },
     order: [["createdAt", "DESC"]],
-    limit: 100,
+    attributes: ["id", "originalFilename", "createdAt", "transcript"],
   });
+
+  for (const job of singleJobs) {
+    if (!job.transcript?.trim()) continue;
+    entries.push({
+      transcriptionJobId: job.id,
+      originalFilename: job.originalFilename,
+      createdAt: job.createdAt,
+    });
+  }
+
+  return entries.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export async function getReviewableCalls(options?: { limit?: number; offset?: number }) {
+  const entries = await listReviewableEntries();
+  const limit = options?.limit ?? entries.length;
+  const offset = options?.offset ?? 0;
+  const page = entries.slice(offset, offset + limit);
 
   const reviews = await CallReview.findAll();
   const reviewByBenchmark = new Map(
@@ -35,30 +78,38 @@ export async function getReviewableCalls() {
 
   const calls: CallReviewMetrics[] = [];
 
-  for (const run of benchmarkRuns) {
-    const jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: run.id } });
-    const hasCompleted = jobs.some((j) => j.status === "completed" && j.transcript?.trim());
-    if (!hasCompleted) continue;
+  for (const entry of page) {
+    if (entry.benchmarkRunId) {
+      const jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: entry.benchmarkRunId } });
+      const review = reviewByBenchmark.get(entry.benchmarkRunId) ?? null;
+      calls.push(
+        buildCallMetrics(review, jobs, {
+          benchmarkRunId: entry.benchmarkRunId,
+          originalFilename: entry.originalFilename,
+          createdAt: entry.createdAt,
+        }),
+      );
+      continue;
+    }
 
-    const review = reviewByBenchmark.get(run.id) ?? null;
-    calls.push(buildCallMetrics(review, jobs, {
-      benchmarkRunId: run.id,
-      originalFilename: run.originalFilename,
-      createdAt: run.createdAt,
-    }));
+    if (entry.transcriptionJobId) {
+      const job = await TranscriptionJob.findByPk(entry.transcriptionJobId);
+      if (!job) continue;
+      const review = reviewByJob.get(job.id) ?? null;
+      calls.push(
+        buildCallMetrics(review, [job], {
+          transcriptionJobId: job.id,
+          originalFilename: entry.originalFilename,
+          createdAt: entry.createdAt,
+        }),
+      );
+    }
   }
 
-  for (const job of singleJobs) {
-    if (!job.transcript?.trim()) continue;
-    const review = reviewByJob.get(job.id) ?? null;
-    calls.push(buildCallMetrics(review, [job], {
-      transcriptionJobId: job.id,
-      originalFilename: job.originalFilename,
-      createdAt: job.createdAt,
-    }));
-  }
-
-  return calls;
+  return {
+    calls,
+    pagination: buildPaginationMeta(entries.length, limit, offset, page.length),
+  };
 }
 
 function buildCallMetrics(
@@ -156,7 +207,7 @@ export async function saveReview(input: {
 }
 
 export async function getReviewDashboard() {
-  const calls = await getReviewableCalls();
+  const { calls } = await getReviewableCalls();
   const finalized = calls.filter((c) => c.reviewStatus === "finalized");
   const drafts = calls.filter((c) => c.reviewStatus === "draft");
 

@@ -1,10 +1,12 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { Op } from "sequelize";
 import { BenchmarkRun, TranscriptionJob, initDb } from "@/lib/models";
 import type { BenchmarkSlotConfig } from "@/lib/models/BenchmarkRun";
 import type { JobOptions } from "@/lib/models/TranscriptionJob";
 import { getUploadDir } from "@/lib/paths";
+import { buildPaginationMeta, parsePaginationParams } from "@/lib/pagination";
 import { getProvider, resolveModel } from "@/lib/providers";
 import { enqueueJobs, ensureQueueRunning } from "@/lib/queue";
 
@@ -35,22 +37,37 @@ function serializeRun(run: BenchmarkRun, jobs: TranscriptionJob[]) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await initDb();
     ensureQueueRunning();
+    const { limit, offset } = parsePaginationParams(new URL(request.url).searchParams);
+
+    const total = await BenchmarkRun.count();
     const runs = await BenchmarkRun.findAll({
       order: [["createdAt", "DESC"]],
-      limit: 30,
+      limit,
+      offset,
     });
 
-    const result = [];
-    for (const run of runs) {
-      const jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: run.id } });
-      result.push(serializeRun(run, jobs));
+    const runIds = runs.map((run) => run.id);
+    const allJobs = runIds.length
+      ? await TranscriptionJob.findAll({ where: { benchmarkRunId: { [Op.in]: runIds } } })
+      : [];
+    const jobsByRun = new Map<string, TranscriptionJob[]>();
+    for (const job of allJobs) {
+      if (!job.benchmarkRunId) continue;
+      const list = jobsByRun.get(job.benchmarkRunId) ?? [];
+      list.push(job);
+      jobsByRun.set(job.benchmarkRunId, list);
     }
 
-    return NextResponse.json({ runs: result });
+    const result = runs.map((run) => serializeRun(run, jobsByRun.get(run.id) ?? []));
+
+    return NextResponse.json({
+      runs: result,
+      pagination: buildPaginationMeta(total, limit, offset, runs.length),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch benchmarks";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -26,8 +26,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { ListSearch } from "@/components/ui/list-search";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+import type { PaginationMeta } from "@/lib/pagination";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
 
@@ -82,7 +85,12 @@ export function TranscriberApp() {
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobSearch, setJobSearch] = useState("");
+  const [jobPagination, setJobPagination] = useState<PaginationMeta | null>(null);
+  const [loadingMoreJobs, setLoadingMoreJobs] = useState(false);
+  const jobsLengthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  jobsLengthRef.current = jobs.length;
 
   const resetFileInput = () => {
     if (fileInputRef.current) {
@@ -123,10 +131,17 @@ export function TranscriberApp() {
     setSettings(data.settings);
   }, []);
 
-  const loadJobs = useCallback(async () => {
-    const res = await fetch("/api/jobs");
-    const data = await res.json();
-    setJobs(data.jobs ?? []);
+  const loadJobs = useCallback(async (append = false) => {
+    if (append) setLoadingMoreJobs(true);
+    try {
+      const offset = append ? jobsLengthRef.current : 0;
+      const res = await fetch(`/api/jobs?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const data = await res.json();
+      setJobs((prev) => (append ? [...prev, ...(data.jobs ?? [])] : (data.jobs ?? [])));
+      setJobPagination(data.pagination ?? null);
+    } finally {
+      if (append) setLoadingMoreJobs(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -618,6 +633,11 @@ export function TranscriberApp() {
                   </div>
                 ))
                 )}
+                <ListPagination
+                  pagination={jobPagination}
+                  loading={loadingMoreJobs}
+                  onLoadMore={() => void loadJobs(true)}
+                />
               </div>
             )}
           </Card>

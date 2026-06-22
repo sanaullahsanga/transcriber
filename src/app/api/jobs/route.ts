@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Op } from "sequelize";
 import { initDb, TranscriptionJob } from "@/lib/models";
+import { buildPaginationMeta, parsePaginationParams } from "@/lib/pagination";
 import { ensureQueueRunning } from "@/lib/queue";
 
 export const runtime = "nodejs";
@@ -12,17 +13,20 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
-    const limit = Math.min(Number(searchParams.get("limit") ?? 50), 100);
+    const { limit, offset } = parsePaginationParams(searchParams);
 
     const where = {
       ...(status ? { status } : {}),
       benchmarkRunId: { [Op.is]: null },
     };
 
+    const total = await TranscriptionJob.count({ where });
+
     const jobs = await TranscriptionJob.findAll({
       where,
       order: [["createdAt", "DESC"]],
       limit,
+      offset,
     });
 
     return NextResponse.json({
@@ -42,6 +46,7 @@ export async function GET(request: NextRequest) {
         updatedAt: job.updatedAt,
         completedAt: job.completedAt,
       })),
+      pagination: buildPaginationMeta(total, limit, offset, jobs.length),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch jobs";

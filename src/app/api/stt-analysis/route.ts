@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Op } from "sequelize";
+import { Op, Sequelize } from "sequelize";
 import {
   ensureAnalysisQueueRunning,
   enqueueAnalyses,
 } from "@/lib/analysis-queue";
 import { isLlmConfigured } from "@/lib/llm/analyze-stt";
 import { initDb, SttAnalysis, TranscriptionJob } from "@/lib/models";
+import { buildPaginationMeta, parsePaginationParams } from "@/lib/pagination";
 
 export const runtime = "nodejs";
 
@@ -37,21 +38,30 @@ function serializeItem(job: TranscriptionJob, analysis: SttAnalysis | null) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await initDb();
     ensureAnalysisQueueRunning();
+    const { limit, offset } = parsePaginationParams(new URL(request.url).searchParams);
 
-    const jobs = (
-      await TranscriptionJob.findAll({
-        where: {
-          status: "completed",
-          transcript: { [Op.ne]: null },
-        },
-        order: [["createdAt", "DESC"]],
-        limit: 200,
-      })
-    ).filter((job) => Boolean(job.transcript?.trim()));
+    const jobWhere = {
+      status: "completed" as const,
+      [Op.and]: [
+        Sequelize.where(
+          Sequelize.fn("LENGTH", Sequelize.fn("TRIM", Sequelize.col("transcript"))),
+          { [Op.gt]: 0 },
+        ),
+      ],
+    };
+
+    const total = await TranscriptionJob.count({ where: jobWhere });
+
+    const jobs = await TranscriptionJob.findAll({
+      where: jobWhere,
+      order: [["createdAt", "DESC"]],
+      limit,
+      offset,
+    });
 
     const analyses = await SttAnalysis.findAll({
       where: { jobId: jobs.map((j) => j.id) },
@@ -60,15 +70,17 @@ export async function GET() {
 
     const items = jobs.map((job) => serializeItem(job, analysisByJob.get(job.id) ?? null));
 
-    const allIssues = analyses.flatMap((a) => (a.status === "completed" ? a.issues : []));
+    const allAnalyses = await SttAnalysis.findAll();
+    const allIssues = allAnalyses.flatMap((a) => (a.status === "completed" ? a.issues : []));
 
     return NextResponse.json({
       configured: isLlmConfigured(),
       llmModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       items,
+      pagination: buildPaginationMeta(total, limit, offset, jobs.length),
       stats: {
-        analyzed: analyses.filter((a) => a.status === "completed").length,
-        pending: analyses.filter((a) => a.status === "pending" || a.status === "processing").length,
+        analyzed: allAnalyses.filter((a) => a.status === "completed").length,
+        pending: allAnalyses.filter((a) => a.status === "pending" || a.status === "processing").length,
         totalIssues: allIssues.length,
         highSeverity: allIssues.filter((i) => i.severity === "high").length,
       },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -16,8 +16,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label, Textarea } from "@/components/ui/input";
 import { ListSearch } from "@/components/ui/list-search";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { formatDate } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
+import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
 
 type SttIssue = {
   category: string;
@@ -90,11 +92,16 @@ export function SttIssuesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [transcriptSearch, setTranscriptSearch] = useState("");
+  const [listPagination, setListPagination] = useState<PaginationMeta | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [defaultPrompt, setDefaultPrompt] = useState("");
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [promptSaved, setPromptSaved] = useState(false);
+  const itemsLengthRef = useRef(0);
+
+  itemsLengthRef.current = data?.items.length ?? 0;
 
   const loadPrompt = useCallback(async () => {
     const res = await fetch("/api/settings/stt-prompt");
@@ -104,11 +111,24 @@ export function SttIssuesPanel() {
     setDefaultPrompt(json.defaultPrompt ?? "");
   }, []);
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/stt-analysis");
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Failed to load");
-    setData(json);
+  const load = useCallback(async (append = false) => {
+    if (append) setLoadingMore(true);
+    try {
+      const offset = append ? itemsLengthRef.current : 0;
+      const res = await fetch(`/api/stt-analysis?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to load");
+      setData((prev) => {
+        if (!append || !prev) return json;
+        return {
+          ...json,
+          items: [...prev.items, ...(json.items ?? [])],
+        };
+      });
+      setListPagination(json.pagination ?? null);
+    } finally {
+      if (append) setLoadingMore(false);
+    }
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -451,6 +471,13 @@ export function SttIssuesPanel() {
                 );
               })
             )}
+          </div>
+          <div className="px-4 pb-4">
+            <ListPagination
+              pagination={listPagination}
+              loading={loadingMore}
+              onLoadMore={() => void load(true)}
+            />
           </div>
         </Card>
 
