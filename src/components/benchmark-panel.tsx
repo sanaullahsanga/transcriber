@@ -19,9 +19,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
+import { ListSearch } from "@/components/ui/list-search";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
+import { matchesListSearch } from "@/lib/list-search";
 
 type ProviderInfo = {
   id: string;
@@ -102,6 +104,7 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runSearch, setRunSearch] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,10 +132,32 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
     return () => clearInterval(interval);
   }, [hasActiveJobs, loadRuns]);
 
-  const activeRun = useMemo(
-    () => runs.find((r) => r.id === activeRunId) ?? runs[0] ?? null,
-    [runs, activeRunId],
+  const filteredRuns = useMemo(
+    () =>
+      runs.filter((run) =>
+        matchesListSearch(runSearch, [
+          run.originalFilename,
+          ...run.jobs.flatMap((job) => [job.provider, job.model, job.status]),
+          ...run.slots.flatMap((slot) => [slot.provider, slot.model]),
+        ]),
+      ),
+    [runs, runSearch],
   );
+
+  const activeRun = useMemo(() => {
+    if (!filteredRuns.length) return null;
+    if (activeRunId && filteredRuns.some((run) => run.id === activeRunId)) {
+      return filteredRuns.find((run) => run.id === activeRunId) ?? filteredRuns[0]!;
+    }
+    return filteredRuns[0]!;
+  }, [filteredRuns, activeRunId]);
+
+  useEffect(() => {
+    if (!activeRun) return;
+    if (activeRunId !== activeRun.id) {
+      setActiveRunId(activeRun.id);
+    }
+  }, [activeRun, activeRunId]);
 
   useEffect(() => {
     if (runs.length && !activeRunId) {
@@ -490,9 +515,13 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
               <p className="mt-1 text-sm text-zinc-600">Upload audio and run a comparison</p>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {runs.map((run) => {
+            <div className="space-y-4 px-4 pb-4">
+              <ListSearch value={runSearch} onChange={setRunSearch} />
+              {filteredRuns.length === 0 ? (
+                <p className="py-12 text-center text-sm text-zinc-500">No benchmarks match your search</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                {filteredRuns.map((run) => {
                   const allDone = run.jobs.every((j) => j.status === "completed" || j.status === "failed");
                   const anyProcessing = run.jobs.some(
                     (j) => j.status === "pending" || j.status === "processing",
@@ -518,7 +547,8 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                     </button>
                   );
                 })}
-              </div>
+                </div>
+              )}
 
               {activeRun && (
                 <div className="space-y-4">

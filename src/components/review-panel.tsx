@@ -16,7 +16,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { Label, Textarea } from "@/components/ui/input";
+import { ListSearch } from "@/components/ui/list-search";
 import { formatDate } from "@/lib/utils";
+import { matchesListSearch } from "@/lib/list-search";
 import { computeWordErrorRate } from "@/lib/wer";
 
 type WerMetrics = {
@@ -83,6 +85,7 @@ export function ReviewPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [callSearch, setCallSearch] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/reviews");
@@ -98,16 +101,40 @@ export function ReviewPanel() {
       .finally(() => setLoading(false));
   }, [load]);
 
-  const activeCall = useMemo(
-    () => calls.find((c) => callKey(c) === activeKey) ?? calls[0] ?? null,
-    [calls, activeKey],
+  const filteredCalls = useMemo(
+    () =>
+      calls.filter((call) =>
+        matchesListSearch(callSearch, [
+          call.originalFilename,
+          call.benchmarkRunId ? "benchmark" : "transcribe",
+          call.reviewStatus ?? "not reviewed",
+          ...call.jobs.flatMap((job) => [job.provider, job.model]),
+        ]),
+      ),
+    [calls, callSearch],
   );
+
+  const activeCall = useMemo(() => {
+    if (!filteredCalls.length) return null;
+    if (activeKey && filteredCalls.some((call) => callKey(call) === activeKey)) {
+      return filteredCalls.find((call) => callKey(call) === activeKey) ?? filteredCalls[0]!;
+    }
+    return filteredCalls[0]!;
+  }, [filteredCalls, activeKey]);
 
   useEffect(() => {
     if (calls.length && !activeKey) {
-      setActiveKey(callKey(calls[0]));
+      setActiveKey(callKey(calls[0]!));
     }
   }, [calls, activeKey]);
+
+  useEffect(() => {
+    if (!activeCall) return;
+    const key = callKey(activeCall);
+    if (activeKey !== key) {
+      setActiveKey(key);
+    }
+  }, [activeCall, activeKey]);
 
   useEffect(() => {
     if (activeCall) {
@@ -283,17 +310,22 @@ export function ReviewPanel() {
               <RefreshCw className="h-4 w-4" />
             </Button>
           </CardHeader>
-          <div className="max-h-[600px] space-y-2 overflow-y-auto">
+          <div className="px-4 pb-3">
+            <ListSearch value={callSearch} onChange={setCallSearch} />
+          </div>
+          <div className="max-h-[600px] space-y-2 overflow-y-auto px-4 pb-4">
             {calls.length === 0 ? (
               <p className="py-8 text-center text-sm text-zinc-500">No completed transcripts yet</p>
+            ) : filteredCalls.length === 0 ? (
+              <p className="py-8 text-center text-sm text-zinc-500">No calls match your search</p>
             ) : (
-              calls.map((call) => (
+              filteredCalls.map((call) => (
                 <button
                   key={callKey(call)}
                   type="button"
                   onClick={() => setActiveKey(callKey(call))}
                   className={`w-full rounded-lg p-3 text-left ring-1 transition-colors ${
-                    callKey(activeCall) === callKey(call)
+                    activeCall !== null && callKey(activeCall) === callKey(call)
                       ? "bg-violet-500/15 ring-violet-500/30"
                       : "bg-white/[0.02] ring-white/5 hover:ring-white/10"
                   }`}

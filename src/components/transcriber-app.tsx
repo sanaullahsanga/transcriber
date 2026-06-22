@@ -25,9 +25,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
+import { ListSearch } from "@/components/ui/list-search";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
+import { matchesListSearch } from "@/lib/list-search";
 
 type ProviderInfo = {
   id: string;
@@ -79,6 +81,7 @@ export function TranscriberApp() {
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [jobSearch, setJobSearch] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetFileInput = () => {
@@ -93,6 +96,20 @@ export function TranscriberApp() {
   );
 
   const hasActiveJobs = jobs.some((j) => j.status === "pending" || j.status === "processing");
+
+  const filteredJobs = useMemo(
+    () =>
+      jobs.filter((job) =>
+        matchesListSearch(jobSearch, [
+          job.originalFilename,
+          job.provider,
+          job.model,
+          job.status,
+          job.errorMessage,
+        ]),
+      ),
+    [jobs, jobSearch],
+  );
 
   const loadProviders = useCallback(async () => {
     const res = await fetch("/api/providers");
@@ -508,8 +525,12 @@ export function TranscriberApp() {
                 <p className="mt-1 text-sm text-zinc-600">Upload audio to get started</p>
               </div>
             ) : (
-              <div className="space-y-3">
-                {jobs.map((job) => (
+              <div className="space-y-3 px-4 pb-4">
+                <ListSearch value={jobSearch} onChange={setJobSearch} />
+                {filteredJobs.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-zinc-500">No transcriptions match your search</p>
+                ) : (
+                  filteredJobs.map((job) => (
                   <div
                     key={job.id}
                     className="rounded-xl border border-white/5 bg-white/[0.02] transition-colors hover:border-white/10"
@@ -595,7 +616,8 @@ export function TranscriberApp() {
                       </div>
                     )}
                   </div>
-                ))}
+                ))
+                )}
               </div>
             )}
           </Card>

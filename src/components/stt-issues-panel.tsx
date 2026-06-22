@@ -15,7 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label, Textarea } from "@/components/ui/input";
+import { ListSearch } from "@/components/ui/list-search";
 import { formatDate } from "@/lib/utils";
+import { matchesListSearch } from "@/lib/list-search";
 
 type SttIssue = {
   category: string;
@@ -87,6 +89,7 @@ export function SttIssuesPanel() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
+  const [transcriptSearch, setTranscriptSearch] = useState("");
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [defaultPrompt, setDefaultPrompt] = useState("");
@@ -129,10 +132,31 @@ export function SttIssuesPanel() {
     return () => clearInterval(interval);
   }, [hasActive, load]);
 
+  const filteredItems = useMemo(() => {
+    if (!data) return [];
+    return data.items.filter((item) => {
+      const analysisStatus = item.analysis?.status ?? "not analyzed";
+      return matchesListSearch(transcriptSearch, [
+        item.originalFilename,
+        item.provider,
+        item.model,
+        item.source,
+        analysisStatus,
+        item.source === "benchmark" ? "benchmark" : "transcribe",
+      ]);
+    });
+  }, [data, transcriptSearch]);
+
   const activeItem = useMemo(
-    () => data?.items.find((i) => i.jobId === activeJobId) ?? data?.items[0] ?? null,
-    [data, activeJobId],
+    () => filteredItems.find((i) => i.jobId === activeJobId) ?? filteredItems[0] ?? null,
+    [filteredItems, activeJobId],
   );
+
+  useEffect(() => {
+    if (!filteredItems.length) return;
+    if (activeJobId && filteredItems.some((item) => item.jobId === activeJobId)) return;
+    setActiveJobId(filteredItems[0]!.jobId);
+  }, [filteredItems, activeJobId]);
 
   const flatIssues = useMemo(() => {
     if (!data) return [];
@@ -151,9 +175,21 @@ export function SttIssuesPanel() {
   }, [data]);
 
   const filteredIssues = useMemo(() => {
-    if (severityFilter === "all") return flatIssues;
-    return flatIssues.filter((i) => i.severity === severityFilter);
-  }, [flatIssues, severityFilter]);
+    const bySeverity =
+      severityFilter === "all" ? flatIssues : flatIssues.filter((i) => i.severity === severityFilter);
+    if (!transcriptSearch.trim()) return bySeverity;
+    return bySeverity.filter((issue) =>
+      matchesListSearch(transcriptSearch, [
+        issue.filename,
+        issue.provider,
+        issue.model,
+        issue.category,
+        issue.severity,
+        issue.description,
+        issue.excerpt,
+      ]),
+    );
+  }, [flatIssues, severityFilter, transcriptSearch]);
 
   const toggleSelect = (jobId: string) => {
     setSelected((prev) => {
@@ -332,11 +368,19 @@ export function SttIssuesPanel() {
             </Button>
           </div>
 
-          <div className="max-h-[520px] space-y-2 overflow-y-auto">
-            {data.items.length === 0 ? (
+          <ListSearch
+            value={transcriptSearch}
+            onChange={setTranscriptSearch}
+            className="mb-3 px-4"
+          />
+
+          <div className="max-h-[520px] space-y-2 overflow-y-auto px-4 pb-4">
+            {!data || data.items.length === 0 ? (
               <p className="py-8 text-center text-sm text-zinc-500">No completed transcripts yet</p>
+            ) : filteredItems.length === 0 ? (
+              <p className="py-8 text-center text-sm text-zinc-500">No transcripts match your search</p>
             ) : (
-              data.items.map((item) => {
+              filteredItems.map((item) => {
                 const isSelected = selected.has(item.jobId);
                 const analysis = item.analysis;
                 return (
