@@ -11,6 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AudioPlayer } from "@/components/audio-player";
+import { ProviderDisagreements } from "@/components/provider-disagreements";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -456,6 +457,10 @@ export function ReviewPanel() {
                 {activeCall.audioJobId && (
                   <AudioPlayer jobId={activeCall.audioJobId} filename={activeCall.originalFilename} />
                 )}
+
+                <div className="mt-4">
+                  <ProviderDisagreements jobs={activeCall.jobs} referenceText={referenceText} />
+                </div>
 
                 <div className="mt-4 space-y-2">
                   <Label>
