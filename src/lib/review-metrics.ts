@@ -78,6 +78,7 @@ export function aggregateProviderStats(
   >();
 
   for (const call of finalizedCalls) {
+    const countedForCall = new Set<string>();
     for (const job of call.jobs) {
       if (!job.metrics) continue;
       const key = `${job.provider}::${job.model}`;
@@ -90,13 +91,16 @@ export function aggregateProviderStats(
         werSum: 0,
         scoredFilenames: [],
       };
-      existing.callCount++;
+      if (!countedForCall.has(key)) {
+        existing.callCount++;
+        countedForCall.add(key);
+        if (!existing.scoredFilenames.includes(call.originalFilename)) {
+          existing.scoredFilenames.push(call.originalFilename);
+        }
+      }
       existing.totalErrors += job.metrics.errorCount;
       existing.totalRefWords += job.metrics.refWordCount;
       existing.werSum += job.metrics.wer;
-      if (!existing.scoredFilenames.includes(call.originalFilename)) {
-        existing.scoredFilenames.push(call.originalFilename);
-      }
       stats.set(key, existing);
     }
   }
@@ -107,7 +111,7 @@ export function aggregateProviderStats(
       model: s.model,
       callCount: s.callCount,
       finalizedReviewCount,
-      missingReviewCount: Math.max(0, finalizedReviewCount - s.callCount),
+      missingReviewCount: Math.max(0, finalizedReviewCount - s.scoredFilenames.length),
       scoredFilenames: s.scoredFilenames,
       avgWerPercent:
         s.callCount > 0 ? Math.round((s.werSum / s.callCount) * 1000) / 10 : 0,

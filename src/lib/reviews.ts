@@ -62,7 +62,37 @@ async function listReviewableEntries(): Promise<ReviewableEntry[]> {
   return entries.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
+async function backfillEmptyFinalizedReferences() {
+  const reviews = await CallReview.findAll({
+    where: { status: "finalized", referenceTranscript: "" },
+  });
+  if (!reviews.length) return;
+
+  for (const review of reviews) {
+    let jobs: TranscriptionJob[] = [];
+    if (review.benchmarkRunId) {
+      jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: review.benchmarkRunId } });
+    } else if (review.transcriptionJobId) {
+      const job = await TranscriptionJob.findByPk(review.transcriptionJobId);
+      if (job) jobs = [job];
+    }
+
+    const deepgram = findDeepgramJob(jobs);
+    const fallback =
+      deepgram?.transcript?.trim() ||
+      jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim();
+    if (!fallback) continue;
+
+    await review.update({
+      referenceTranscript: fallback,
+      referenceSourceJobId: deepgram?.id ?? review.referenceSourceJobId,
+      referenceSourceProvider: deepgram ? "deepgram" : review.referenceSourceProvider,
+    });
+  }
+}
+
 export async function getReviewableCalls(options?: { limit?: number; offset?: number }) {
+  await initDb();
   const entries = await listReviewableEntries();
   const limit = options?.limit ?? entries.length;
   const offset = options?.offset ?? 0;
@@ -76,11 +106,37 @@ export async function getReviewableCalls(options?: { limit?: number; offset?: nu
     reviews.filter((r) => r.transcriptionJobId).map((r) => [r.transcriptionJobId!, r]),
   );
 
+  const benchmarkRunIds = page
+    .map((entry) => entry.benchmarkRunId)
+    .filter((id): id is string => Boolean(id));
+  const benchmarkJobs =
+    benchmarkRunIds.length > 0
+      ? await TranscriptionJob.findAll({
+          where: { benchmarkRunId: { [Op.in]: benchmarkRunIds } },
+        })
+      : [];
+  const jobsByBenchmark = new Map<string, TranscriptionJob[]>();
+  for (const job of benchmarkJobs) {
+    if (!job.benchmarkRunId) continue;
+    const list = jobsByBenchmark.get(job.benchmarkRunId) ?? [];
+    list.push(job);
+    jobsByBenchmark.set(job.benchmarkRunId, list);
+  }
+
+  const singleJobIds = page
+    .map((entry) => entry.transcriptionJobId)
+    .filter((id): id is string => Boolean(id));
+  const singleJobs =
+    singleJobIds.length > 0
+      ? await TranscriptionJob.findAll({ where: { id: { [Op.in]: singleJobIds } } })
+      : [];
+  const jobById = new Map(singleJobs.map((job) => [job.id, job]));
+
   const calls: CallReviewMetrics[] = [];
 
   for (const entry of page) {
     if (entry.benchmarkRunId) {
-      const jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: entry.benchmarkRunId } });
+      const jobs = jobsByBenchmark.get(entry.benchmarkRunId) ?? [];
       const review = reviewByBenchmark.get(entry.benchmarkRunId) ?? null;
       calls.push(
         buildCallMetrics(review, jobs, {
@@ -93,7 +149,7 @@ export async function getReviewableCalls(options?: { limit?: number; offset?: nu
     }
 
     if (entry.transcriptionJobId) {
-      const job = await TranscriptionJob.findByPk(entry.transcriptionJobId);
+      const job = jobById.get(entry.transcriptionJobId);
       if (!job) continue;
       const review = reviewByJob.get(job.id) ?? null;
       calls.push(
@@ -123,9 +179,16 @@ function buildCallMetrics(
   },
 ): CallReviewMetrics {
   const deepgram = findDeepgramJob(jobs);
-  const referenceForWer = review?.referenceTranscript?.trim() ?? "";
-  const displayReference =
-    referenceForWer || deepgram?.transcript?.trim() || jobs.find((j) => j.transcript?.trim())?.transcript || "";
+  const savedReference = review?.referenceTranscript?.trim() ?? "";
+  const fallbackReference =
+    deepgram?.transcript?.trim() ||
+    jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim() ||
+    "";
+  const displayReference = savedReference || fallbackReference;
+  // Finalized reviews must contribute to dashboard WER even when reference was
+  // only visible as UI prefill and not persisted historically.
+  const referenceForWer =
+    savedReference || (review?.status === "finalized" ? fallbackReference : "");
 
   return {
     reviewId: review?.id ?? null,
@@ -192,11 +255,23 @@ export async function saveReview(input: {
   const [review] = await CallReview.upsert({
     ...where,
     originalFilename,
-    referenceTranscript: input.referenceTranscript,
+    referenceTranscript: input.referenceTranscript.trim(),
     referenceSourceJobId: deepgram?.id ?? null,
     referenceSourceProvider: deepgram ? "deepgram" : null,
     status: input.status ?? "draft",
   });
+
+  if (
+    review.status === "finalized" &&
+    !review.referenceTranscript.trim() &&
+    deepgram?.transcript?.trim()
+  ) {
+    await review.update({
+      referenceTranscript: deepgram.transcript.trim(),
+      referenceSourceJobId: deepgram.id,
+      referenceSourceProvider: "deepgram",
+    });
+  }
 
   return buildCallMetrics(review, jobs, {
     benchmarkRunId: input.benchmarkRunId,
@@ -207,6 +282,8 @@ export async function saveReview(input: {
 }
 
 export async function getReviewDashboard() {
+  await initDb();
+  await backfillEmptyFinalizedReferences();
   const { calls } = await getReviewableCalls();
   const finalized = calls.filter((c) => c.reviewStatus === "finalized");
   const drafts = calls.filter((c) => c.reviewStatus === "draft");

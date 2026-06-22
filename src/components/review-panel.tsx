@@ -101,7 +101,9 @@ export function ReviewPanel() {
     if (append) setLoadingMoreCalls(true);
     try {
       const offset = append ? callsLengthRef.current : 0;
-      const res = await fetch(`/api/reviews?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const res = await fetch(`/api/reviews?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`, {
+        cache: "no-store",
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load reviews");
       setCalls((prev) => (append ? [...prev, ...(json.calls ?? [])] : (json.calls ?? [])));
@@ -110,6 +112,13 @@ export function ReviewPanel() {
     } finally {
       if (append) setLoadingMoreCalls(false);
     }
+  }, []);
+
+  const refreshDashboard = useCallback(async () => {
+    const res = await fetch("/api/reviews?view=dashboard", { cache: "no-store" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Failed to load dashboard");
+    setDashboard(json);
   }, []);
 
   useEffect(() => {
@@ -184,6 +193,7 @@ export function ReviewPanel() {
       const res = await fetch("/api/reviews", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({
           benchmarkRunId: activeCall.benchmarkRunId,
           transcriptionJobId: activeCall.transcriptionJobId,
@@ -195,6 +205,11 @@ export function ReviewPanel() {
       if (!res.ok) throw new Error(json.error ?? "Failed to save");
 
       setSaved(true);
+      if (json.dashboard) {
+        setDashboard(json.dashboard);
+      } else {
+        await refreshDashboard();
+      }
       await load();
       setActiveKey(callKey(json));
       setReferenceText(json.referenceTranscript);

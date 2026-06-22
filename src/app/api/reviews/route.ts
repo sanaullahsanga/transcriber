@@ -42,7 +42,9 @@ export async function PUT(request: NextRequest) {
       status: body.status,
     });
 
-    return NextResponse.json(result);
+    const dashboard = await getReviewDashboard();
+
+    return NextResponse.json({ ...result, dashboard });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to save review";
     return NextResponse.json({ error: message }, { status: 500 });
