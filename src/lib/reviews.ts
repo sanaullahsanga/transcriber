@@ -211,9 +211,22 @@ export async function getReviewDashboard() {
   const finalized = calls.filter((c) => c.reviewStatus === "finalized");
   const drafts = calls.filter((c) => c.reviewStatus === "draft");
 
-  const providerStats = aggregateProviderStats(calls, true);
+  const providerStats = aggregateProviderStats(
+    calls.map((call) => ({
+      jobs: call.jobs,
+      reviewStatus: call.reviewStatus,
+      originalFilename: call.originalFilename,
+    })),
+    true,
+  );
   const allProviderStats = aggregateProviderStats(
-    calls.filter((c) => c.reviewStatus),
+    calls
+      .filter((c) => c.reviewStatus)
+      .map((call) => ({
+        jobs: call.jobs,
+        reviewStatus: call.reviewStatus,
+        originalFilename: call.originalFilename,
+      })),
     false,
   );
 

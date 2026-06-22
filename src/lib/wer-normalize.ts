@@ -12,6 +12,85 @@ const DIGIT_WORD_TO_CHAR: Record<string, string> = {
   nine: "9",
 };
 
+const KNOWN_SPEAKER_LINE_RE =
+  /^(Agent|Caller|Other|Unknown|Speaker\s+\d+):\s*(.+)$/i;
+const NUMERIC_SPEAKER_LINE_RE = /^(\d+):\s*(.+)$/;
+
+function parseSpeakerLine(line: string): { speaker: string; text: string } | null {
+  const known = line.match(KNOWN_SPEAKER_LINE_RE);
+  if (known) {
+    return {
+      speaker: known[1]!.toLowerCase(),
+      text: known[2]!.trim(),
+    };
+  }
+
+  const numeric = line.match(NUMERIC_SPEAKER_LINE_RE);
+  if (numeric) {
+    return {
+      speaker: `speaker-${numeric[1]}`,
+      text: numeric[2]!.trim(),
+    };
+  }
+
+  return null;
+}
+
+function isSpeakerLine(line: string): boolean {
+  return parseSpeakerLine(line) !== null;
+}
+
+/**
+ * Strip speaker labels and merge consecutive same-speaker turns so WER
+ * compares spoken words only, not diarization formatting differences.
+ */
+export function normalizeDialogueForWer(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  const lines = trimmed.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const turns = lines.map((line) => parseSpeakerLine(line));
+  const hasSpeakerLines = lines.some((line) => isSpeakerLine(line));
+
+  if (!hasSpeakerLines) {
+    return trimmed;
+  }
+
+  const merged: string[] = [];
+  let currentSpeaker: string | null = null;
+  let currentTexts: string[] = [];
+
+  const flush = () => {
+    if (!currentTexts.length) return;
+    merged.push(currentTexts.join(" "));
+    currentTexts = [];
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    const turn = turns[index];
+
+    if (!turn) {
+      flush();
+      currentSpeaker = null;
+      merged.push(line);
+      continue;
+    }
+
+    if (turn.speaker === currentSpeaker) {
+      currentTexts.push(turn.text);
+      continue;
+    }
+
+    flush();
+    currentSpeaker = turn.speaker;
+    currentTexts = [turn.text];
+  }
+
+  flush();
+  return merged.join(" ");
+}
+
 function isDigitWord(token: string): boolean {
   return token in DIGIT_WORD_TO_CHAR;
 }
@@ -69,4 +148,8 @@ export function normalizeNumberTokens(tokens: string[]): string[] {
   }
 
   return normalized;
+}
+
+export function prepareTextForWer(text: string): string {
+  return normalizeDialogueForWer(text);
 }

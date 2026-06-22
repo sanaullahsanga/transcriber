@@ -36,8 +36,7 @@ export function buildJobMetrics(
   referenceTranscript: string,
 ): JobWerMetric[] {
   const reference = referenceTranscript.trim();
-  return jobs
-    .filter((j) => j.status === "completed")
+  return [...jobs]
     .sort((a, b) => (a.slotIndex ?? 0) - (b.slotIndex ?? 0))
     .map((job) => ({
       jobId: job.id,
@@ -45,16 +44,26 @@ export function buildJobMetrics(
       model: job.model,
       status: job.status,
       transcript: job.transcript,
-      metrics: reference && job.transcript?.trim()
-        ? computeWordErrorRate(reference, job.transcript)
-        : null,
+      metrics:
+        job.status === "completed" && reference && job.transcript?.trim()
+          ? computeWordErrorRate(reference, job.transcript)
+          : null,
     }));
 }
 
 export function aggregateProviderStats(
-  calls: Array<{ jobs: JobWerMetric[]; reviewStatus: ReviewStatus | null }>,
+  calls: Array<{
+    jobs: JobWerMetric[];
+    reviewStatus: ReviewStatus | null;
+    originalFilename: string;
+  }>,
   finalizedOnly = true,
 ) {
+  const finalizedCalls = calls.filter((call) =>
+    finalizedOnly ? call.reviewStatus === "finalized" : Boolean(call.reviewStatus),
+  );
+  const finalizedReviewCount = finalizedCalls.length;
+
   const stats = new Map<
     string,
     {
@@ -64,11 +73,11 @@ export function aggregateProviderStats(
       totalErrors: number;
       totalRefWords: number;
       werSum: number;
+      scoredFilenames: string[];
     }
   >();
 
-  for (const call of calls) {
-    if (finalizedOnly && call.reviewStatus !== "finalized") continue;
+  for (const call of finalizedCalls) {
     for (const job of call.jobs) {
       if (!job.metrics) continue;
       const key = `${job.provider}::${job.model}`;
@@ -79,11 +88,15 @@ export function aggregateProviderStats(
         totalErrors: 0,
         totalRefWords: 0,
         werSum: 0,
+        scoredFilenames: [],
       };
       existing.callCount++;
       existing.totalErrors += job.metrics.errorCount;
       existing.totalRefWords += job.metrics.refWordCount;
       existing.werSum += job.metrics.wer;
+      if (!existing.scoredFilenames.includes(call.originalFilename)) {
+        existing.scoredFilenames.push(call.originalFilename);
+      }
       stats.set(key, existing);
     }
   }
@@ -93,6 +106,9 @@ export function aggregateProviderStats(
       provider: s.provider,
       model: s.model,
       callCount: s.callCount,
+      finalizedReviewCount,
+      missingReviewCount: Math.max(0, finalizedReviewCount - s.callCount),
+      scoredFilenames: s.scoredFilenames,
       avgWerPercent:
         s.callCount > 0 ? Math.round((s.werSum / s.callCount) * 1000) / 10 : 0,
       cumulativeWerPercent:

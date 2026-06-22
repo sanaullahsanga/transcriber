@@ -59,6 +59,9 @@ type ProviderStat = {
   provider: string;
   model: string;
   callCount: number;
+  finalizedReviewCount: number;
+  missingReviewCount: number;
+  scoredFilenames: string[];
   avgWerPercent: number;
   cumulativeWerPercent: number;
   totalErrors: number;
@@ -253,7 +256,8 @@ export function ReviewPanel() {
                 Cumulative WER by provider
               </CardTitle>
               <CardDescription>
-                Word Error Rate against reviewer reference (finalized reviews only).
+                Word Error Rate against reviewer reference ({dashboard.finalizedCount} finalized
+                {dashboard.finalizedCount === 1 ? "" : " reviews"}).
               </CardDescription>
             </CardHeader>
             {dashboard.providerStats.length === 0 ? (
@@ -267,7 +271,12 @@ export function ReviewPanel() {
                     <tr className="border-b border-white/10 text-left text-zinc-500">
                       <th className="pb-2 pr-4">Provider</th>
                       <th className="pb-2 pr-4">Model</th>
-                      <th className="pb-2 pr-4">Calls</th>
+                      <th className="pb-2 pr-4">
+                        <span className="inline-flex items-center gap-1">
+                          Calls
+                          <InfoTooltip content="Reviews where this provider has a scored WER. Shows scored / total finalized when the provider was not run on every review (e.g. Transcribe-only Deepgram jobs)." />
+                        </span>
+                      </th>
                       <th className="pb-2 pr-4">
                         <span className="inline-flex items-center gap-1">
                           Avg WER
@@ -293,7 +302,21 @@ export function ReviewPanel() {
                       <tr key={`${row.provider}-${row.model}`} className="border-b border-white/5">
                         <td className="py-2.5 pr-4 text-zinc-200">{row.provider}</td>
                         <td className="py-2.5 pr-4 text-zinc-400">{row.model}</td>
-                        <td className="py-2.5 pr-4">{row.callCount}</td>
+                        <td className="py-2.5 pr-4">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>
+                              {row.callCount}
+                              {row.missingReviewCount > 0 ? (
+                                <span className="text-zinc-500"> / {row.finalizedReviewCount}</span>
+                              ) : null}
+                            </span>
+                            {row.missingReviewCount > 0 ? (
+                              <InfoTooltip
+                                content={`Scored in: ${row.scoredFilenames.join(", ") || "none"}. Not scored on ${row.missingReviewCount} other finalized review${row.missingReviewCount === 1 ? "" : "s"} — provider not run, failed, or missing transcript.`}
+                              />
+                            ) : null}
+                          </span>
+                        </td>
                         <td className="py-2.5 pr-4 font-medium text-violet-200">
                           {row.avgWerPercent}%
                         </td>
@@ -348,9 +371,16 @@ export function ReviewPanel() {
                     {call.originalFilename}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    {call.benchmarkRunId ? "Benchmark" : "Transcribe"} · {call.jobs.length} provider
+                    {call.benchmarkRunId ? "Benchmark" : "Transcribe"} · {call.jobs.length} slot
                     {call.jobs.length !== 1 ? "s" : ""}
                   </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {call.jobs.map((job) => (
+                      <Badge key={job.jobId} variant={job.status === "failed" ? "failed" : "pending"}>
+                        {job.provider}/{job.model}
+                      </Badge>
+                    ))}
+                  </div>
                   <div className="mt-1.5">
                     {!call.reviewStatus && <Badge variant="pending">Not reviewed</Badge>}
                     {call.reviewStatus === "draft" && <Badge variant="processing">Draft</Badge>}
@@ -461,6 +491,12 @@ export function ReviewPanel() {
                               WER: {job.metrics.werPercent}% · {job.metrics.errorCount} errors /{" "}
                               {job.metrics.refWordCount} words
                             </p>
+                          ) : job.status === "failed" ? (
+                            <p className="text-sm text-rose-300">Transcription failed — not scored</p>
+                          ) : job.status !== "completed" ? (
+                            <p className="text-sm text-zinc-500">Transcription {job.status}</p>
+                          ) : !job.transcript?.trim() ? (
+                            <p className="text-sm text-zinc-500">No transcript — not scored</p>
                           ) : (
                             <p className="text-sm text-zinc-500">Save reference to compute WER</p>
                           )}
