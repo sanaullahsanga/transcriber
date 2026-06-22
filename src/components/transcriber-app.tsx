@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   CheckCircle2,
+  ClipboardList,
   Copy,
   FileAudio,
   Loader2,
@@ -16,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { BenchmarkPanel } from "@/components/benchmark-panel";
+import { ReviewPanel } from "@/components/review-panel";
 import { AudioPlayer } from "@/components/audio-player";
 import { SttIssuesPanel } from "@/components/stt-issues-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -267,6 +269,10 @@ export function TranscriberApp() {
             <TabsTrigger value="stt-issues">
               <ScanSearch className="h-4 w-4" />
               STT Issues
+            </TabsTrigger>
+            <TabsTrigger value="review">
+              <ClipboardList className="h-4 w-4" />
+              WER Review
             </TabsTrigger>
           </TabsList>
 
@@ -610,6 +616,10 @@ export function TranscriberApp() {
 
           <TabsContent value="stt-issues">
             <SttIssuesPanel />
+          </TabsContent>
+
+          <TabsContent value="review">
+            <ReviewPanel />
           </TabsContent>
         </Tabs>
       </div>

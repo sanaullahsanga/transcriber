@@ -3,11 +3,12 @@ import { DEFAULT_STT_ANALYSIS_SYSTEM_PROMPT } from "../llm/default-stt-prompt";
 import { getSessionKeyterms } from "../keyterms";
 import { AppSettings } from "./AppSettings";
 import { BenchmarkRun } from "./BenchmarkRun";
+import { CallReview } from "./CallReview";
 import { applySchemaPatches } from "./migrations";
 import { SttAnalysis } from "./SttAnalysis";
 import { TranscriptionJob } from "./TranscriptionJob";
 
-export { AppSettings, BenchmarkRun, SttAnalysis, TranscriptionJob };
+export { AppSettings, BenchmarkRun, CallReview, SttAnalysis, TranscriptionJob };
 export type { BenchmarkSlotConfig } from "./BenchmarkRun";
 export type { JobOptions, JobStatus } from "./TranscriptionJob";
 export type {
@@ -16,6 +17,8 @@ export type {
   SttIssueCategory,
   SttIssueSeverity,
 } from "./SttAnalysis";
+
+export type { ReviewStatus } from "./CallReview";
 
 BenchmarkRun.hasMany(TranscriptionJob, { foreignKey: "benchmarkRunId", as: "jobs" });
 TranscriptionJob.belongsTo(BenchmarkRun, { foreignKey: "benchmarkRunId", as: "benchmarkRun" });
