@@ -1,3 +1,5 @@
+import { normalizeNumberTokens } from "./wer-normalize";
+
 export type WerBreakdown = {
   substitutions: number;
   deletions: number;
@@ -17,8 +19,8 @@ export function tokenizeForWer(text: string): string[] {
 }
 
 export function computeWordErrorRate(reference: string, hypothesis: string): WerBreakdown {
-  const ref = tokenizeForWer(reference);
-  const hyp = tokenizeForWer(hypothesis);
+  const ref = normalizeNumberTokens(tokenizeForWer(reference));
+  const hyp = normalizeNumberTokens(tokenizeForWer(hypothesis));
 
   if (ref.length === 0) {
     return {
