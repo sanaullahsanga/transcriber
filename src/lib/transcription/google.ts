@@ -12,23 +12,30 @@ import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } f
 type GoogleWord = protos.google.cloud.speech.v2.IWordInfo;
 type RecognizeRequest = protos.google.cloud.speech.v2.IRecognizeRequest;
 
-/** Models that support speaker diarization in Speech-to-Text v2 Recognize. */
-const DIARIZATION_MODELS = new Set(["chirp_2", "telephony", "chirp"]);
+/** Models that support speaker diarization in Speech-to-Text v2 synchronous Recognize. */
+const DIARIZATION_MODELS = new Set(["chirp_3", "chirp_2"]);
 
 function modelSupportsDiarization(model: string): boolean {
   return DIARIZATION_MODELS.has(model);
 }
 
-function resolveGoogleModel(model: string, wantDiarization: boolean): string {
+function resolveGoogleModel(
+  model: string,
+  wantDiarization: boolean,
+  isReference: boolean,
+): string {
+  if (isReference) {
+    return model === "short" ? "short" : "telephony";
+  }
   if (wantDiarization && !modelSupportsDiarization(model)) {
-    return "telephony";
+    return "chirp_3";
   }
   return model;
 }
 
-function isDiarizationUnsupportedError(error: unknown): boolean {
+function isInvalidConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /diarization/i.test(message) && /not support|unsupported|invalid_argument/i.test(message);
+  return /invalid_argument/i.test(message) && /unsupported|not support|diarization/i.test(message);
 }
 
 function buildRecognizeRequest(input: {
@@ -38,8 +45,10 @@ function buildRecognizeRequest(input: {
   keyterms: string[];
   speakerDiarization: boolean;
   audio: Buffer;
+  includeAdaptation?: boolean;
 }): RecognizeRequest {
   const useDiarization = input.speakerDiarization && modelSupportsDiarization(input.model);
+  const includeAdaptation = input.includeAdaptation !== false && input.keyterms.length > 0;
 
   return {
     recognizer: `projects/${input.projectId}/locations/global/recognizers/_`,
@@ -58,7 +67,7 @@ function buildRecognizeRequest(input: {
             }
           : {}),
       },
-      ...(input.keyterms.length
+      ...(includeAdaptation
         ? {
             adaptation: {
               phraseSets: [
@@ -102,29 +111,41 @@ function transcriptFromResponse(
 
 async function recognizeWithGoogle(
   client: SpeechClient,
-  request: RecognizeRequest,
-  speakerDiarization: boolean,
+  base: {
+    projectId: string;
+    model: string;
+    language: string;
+    keyterms: string[];
+    speakerDiarization: boolean;
+    audio: Buffer;
+  },
 ): Promise<string> {
-  try {
-    const [response] = await client.recognize(request);
-    return transcriptFromResponse(response, speakerDiarization);
-  } catch (error) {
-    const hasDiarization = Boolean(request.config?.features?.diarizationConfig);
-    if (hasDiarization && isDiarizationUnsupportedError(error)) {
-      const [response] = await client.recognize({
-        ...request,
-        config: {
-          ...request.config,
-          features: {
-            ...request.config?.features,
-            diarizationConfig: undefined,
-          },
-        },
-      });
-      return transcriptFromResponse(response, false);
+  const attempts: Array<{ speakerDiarization: boolean; includeAdaptation: boolean }> = [
+    { speakerDiarization: base.speakerDiarization, includeAdaptation: true },
+    { speakerDiarization: false, includeAdaptation: true },
+    { speakerDiarization: false, includeAdaptation: false },
+  ];
+
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    const request = buildRecognizeRequest({
+      ...base,
+      speakerDiarization: attempt.speakerDiarization,
+      includeAdaptation: attempt.includeAdaptation,
+    });
+
+    try {
+      const [response] = await client.recognize(request);
+      return transcriptFromResponse(response, attempt.speakerDiarization);
+    } catch (error) {
+      lastError = error;
+      if (!isInvalidConfigError(error)) {
+        throw error;
+      }
     }
-    throw error;
   }
+
+  throw lastError;
 }
 
 function toLanguageCode(language: string): string {
@@ -224,9 +245,11 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
       const audio = await readFile(prepared.filePath);
       const client = createSpeechClient();
       const keyterms = input.options.keyterms.filter(Boolean).slice(0, 500);
-      const wantDiarization = input.options.speakerDiarization;
-      const model = resolveGoogleModel(input.model, wantDiarization);
-      const request = buildRecognizeRequest({
+      const isReference = Boolean(input.options.isReference);
+      const wantDiarization = input.options.speakerDiarization && !isReference;
+      const model = resolveGoogleModel(input.model, wantDiarization, isReference);
+
+      const text = await recognizeWithGoogle(client, {
         projectId,
         model,
         language: input.options.language,
@@ -234,8 +257,6 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
         speakerDiarization: wantDiarization,
         audio,
       });
-
-      const text = await recognizeWithGoogle(client, request, wantDiarization);
 
       return { text, durationMs: null };
     } finally {

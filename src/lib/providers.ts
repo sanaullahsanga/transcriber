@@ -60,8 +60,9 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     models: [
       { id: "long", label: "Long", description: "Best for longer recordings" },
       { id: "short", label: "Short", description: "Optimized for short utterances" },
-      { id: "chirp_2", label: "Chirp 2", description: "Latest Chirp model" },
-      { id: "telephony", label: "Telephony", description: "Phone call audio" },
+      { id: "telephony", label: "Telephony", description: "Phone call audio (8 kHz)" },
+      { id: "chirp_3", label: "Chirp 3", description: "Latest model with diarization support" },
+      { id: "chirp_2", label: "Chirp 2", description: "Multilingual Chirp model" },
     ],
   },
 };
