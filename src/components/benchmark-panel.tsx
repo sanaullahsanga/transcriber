@@ -419,8 +419,8 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                 Compare providers
               </CardTitle>
               <CardDescription>
-                Up to 3 provider/model slots per file. Google STT also runs automatically for
-                reviewer reference when configured.
+                Up to 3 provider/model slots per file. Google Chirp 3 runs automatically for
+                reviewer reference when configured (batch API, same models as LiveKit).
               </CardDescription>
             </CardHeader>
 

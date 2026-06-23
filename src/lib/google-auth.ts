@@ -3,6 +3,11 @@ import path from "node:path";
 
 export const DEFAULT_GOOGLE_CREDENTIALS_FILE = "google-service-account.json";
 
+export function getGoogleSttGcsBucket(): string | undefined {
+  const bucket = process.env.GOOGLE_STT_GCS_BUCKET?.trim();
+  return bucket || undefined;
+}
+
 export function getGoogleProjectId(): string | undefined {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT?.trim();
   return projectId || undefined;
@@ -46,13 +51,14 @@ export function loadGoogleCredentials(): object | null {
 
 export function isGoogleSttConfigured(): boolean {
   if (!getGoogleProjectId()) return false;
+  if (!getGoogleSttGcsBucket()) return false;
   return loadGoogleCredentials() !== null;
 }
 
 export function googleSttConfigError(): string {
   return (
-    "Google STT is not configured. Set GOOGLE_CLOUD_PROJECT and either " +
-    "GOOGLE_APPLICATION_CREDENTIALS (path to service account JSON) or " +
-    "GOOGLE_SPEECH_CREDENTIALS_JSON, then restart the server."
+    "Google STT is not configured. Set GOOGLE_CLOUD_PROJECT, GOOGLE_STT_GCS_BUCKET " +
+    "(Cloud Storage bucket for batch transcription of 2–10 min calls), and either " +
+    "GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SPEECH_CREDENTIALS_JSON, then restart."
   );
 }

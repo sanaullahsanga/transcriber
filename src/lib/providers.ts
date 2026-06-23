@@ -54,15 +54,20 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   google: {
     id: "google",
     name: "Google STT",
-    description: "Cloud Speech-to-Text v2 with phrase adaptation",
+    description: "Cloud Speech-to-Text v2 via batch API (2–10 min calls, LiveKit-compatible models)",
     envKey: "GOOGLE_CLOUD_PROJECT",
-    defaultModel: "long",
+    defaultModel: "chirp_3",
     models: [
-      { id: "long", label: "Long", description: "Best for longer recordings" },
-      { id: "short", label: "Short", description: "Optimized for short utterances" },
-      { id: "telephony", label: "Telephony", description: "Phone call audio (8 kHz)" },
-      { id: "chirp_3", label: "Chirp 3", description: "Latest model with diarization support" },
-      { id: "chirp_2", label: "Chirp 2", description: "Multilingual Chirp model" },
+      {
+        id: "chirp_3",
+        label: "Chirp 3",
+        description: "Default — batch + LiveKit streaming, best for long calls",
+      },
+      {
+        id: "telephony",
+        label: "Telephony",
+        description: "Phone call audio — batch + LiveKit v2",
+      },
     ],
   },
 };

@@ -8,6 +8,7 @@ import { getUploadDir, resolveStoredPath } from "./paths";
 import { getProvider, resolveModel, PROVIDERS } from "./providers";
 import { isProviderConfigured } from "./providers-config";
 import { REFERENCE_PROVIDER } from "./reference-provider";
+import { DEFAULT_GOOGLE_STT_MODEL } from "./transcription/google";
 import { enqueueJob, ensureQueueRunning } from "./queue";
 import type { CallSlotConfig } from "./review-metrics";
 
@@ -159,7 +160,7 @@ export async function createReferenceJobForBenchmark(run: BenchmarkRun): Promise
     provider: REFERENCE_PROVIDER,
     model:
       REFERENCE_PROVIDER === "google"
-        ? resolveModel(REFERENCE_PROVIDER, "telephony")
+        ? resolveModel(REFERENCE_PROVIDER, DEFAULT_GOOGLE_STT_MODEL)
         : resolveModel(REFERENCE_PROVIDER),
     options: referenceOptions,
     status: "pending",
@@ -214,7 +215,7 @@ export async function refreshReferenceTranscript(input: {
     provider: REFERENCE_PROVIDER,
     model:
       REFERENCE_PROVIDER === "google"
-        ? resolveModel(REFERENCE_PROVIDER, "telephony")
+        ? resolveModel(REFERENCE_PROVIDER, DEFAULT_GOOGLE_STT_MODEL)
         : resolveModel(REFERENCE_PROVIDER),
     options: referenceOptions,
     status: "pending",

@@ -1,95 +1,87 @@
-import { readFile } from "node:fs/promises";
 import { SpeechClient } from "@google-cloud/speech/build/src/v2";
 import type { protos } from "@google-cloud/speech";
+import { prepareAudioForStt } from "../audio/normalize";
+import { deleteGcsObject, uploadAudioToGcs } from "../google-gcs";
+import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 import {
   getGoogleProjectId,
   googleSttConfigError,
+  isGoogleSttConfigured,
   loadGoogleCredentials,
 } from "../google-auth";
-import { prepareAudioForStt } from "../audio/normalize";
-import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 
 type GoogleWord = protos.google.cloud.speech.v2.IWordInfo;
-type RecognizeRequest = protos.google.cloud.speech.v2.IRecognizeRequest;
+type RecognitionConfig = protos.google.cloud.speech.v2.IRecognitionConfig;
 
-/** Models that support speaker diarization in Speech-to-Text v2 synchronous Recognize. */
-const DIARIZATION_MODELS = new Set(["chirp_3", "chirp_2"]);
+/** LiveKit Google STT v2 models — also support BatchRecognize for 2–10 min calls. */
+export const GOOGLE_STT_MODELS = ["chirp_3", "telephony"] as const;
+export type GoogleSttModel = (typeof GOOGLE_STT_MODELS)[number];
+export const DEFAULT_GOOGLE_STT_MODEL: GoogleSttModel = "chirp_3";
 
-function modelSupportsDiarization(model: string): boolean {
-  return DIARIZATION_MODELS.has(model);
+const BATCH_TIMEOUT_MS = 900_000;
+
+function resolveGoogleModel(model: string): GoogleSttModel {
+  if (model === "telephony") return "telephony";
+  return DEFAULT_GOOGLE_STT_MODEL;
 }
 
-function resolveGoogleModel(
-  model: string,
-  wantDiarization: boolean,
-  isReference: boolean,
-): string {
-  if (isReference) {
-    return model === "short" ? "short" : "telephony";
-  }
-  if (wantDiarization && !modelSupportsDiarization(model)) {
-    return "chirp_3";
-  }
-  return model;
-}
-
-function isInvalidConfigError(error: unknown): boolean {
+function isRetryableConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /invalid_argument/i.test(message) && /unsupported|not support|diarization/i.test(message);
+  return (
+    /invalid_argument/i.test(message) &&
+    /unsupported|not support|diarization|does not exist in the location/i.test(message)
+  );
 }
 
-function buildRecognizeRequest(input: {
+type GoogleRecognizeConfig = {
   projectId: string;
-  model: string;
+  model: GoogleSttModel;
   language: string;
   keyterms: string[];
   speakerDiarization: boolean;
-  audio: Buffer;
-  includeAdaptation?: boolean;
-}): RecognizeRequest {
-  const useDiarization = input.speakerDiarization && modelSupportsDiarization(input.model);
+};
+
+function buildRecognitionConfig(
+  input: GoogleRecognizeConfig & { includeAdaptation?: boolean },
+): RecognitionConfig {
+  const useDiarization = input.speakerDiarization && input.model === "chirp_3";
   const includeAdaptation = input.includeAdaptation !== false && input.keyterms.length > 0;
 
   return {
-    recognizer: `projects/${input.projectId}/locations/global/recognizers/_`,
-    config: {
-      autoDecodingConfig: {},
-      model: input.model,
-      languageCodes: [toLanguageCode(input.language)],
-      features: {
-        enableAutomaticPunctuation: true,
-        ...(useDiarization
-          ? {
-              diarizationConfig: {
-                minSpeakerCount: 1,
-                maxSpeakerCount: 6,
-              },
-            }
-          : {}),
-      },
-      ...(includeAdaptation
+    autoDecodingConfig: {},
+    model: input.model,
+    languageCodes: [toLanguageCode(input.language)],
+    features: {
+      enableAutomaticPunctuation: true,
+      ...(useDiarization
         ? {
-            adaptation: {
-              phraseSets: [
-                {
-                  inlinePhraseSet: {
-                    phrases: input.keyterms.map((value) => ({ value })),
-                  },
-                },
-              ],
+            diarizationConfig: {
+              minSpeakerCount: 1,
+              maxSpeakerCount: 6,
             },
           }
         : {}),
     },
-    content: input.audio,
+    ...(includeAdaptation
+      ? {
+          adaptation: {
+            phraseSets: [
+              {
+                inlinePhraseSet: {
+                  phrases: input.keyterms.map((value) => ({ value })),
+                },
+              },
+            ],
+          },
+        }
+      : {}),
   };
 }
 
-function transcriptFromResponse(
-  response: protos.google.cloud.speech.v2.IRecognizeResponse,
+function transcriptFromBatchResults(
+  results: protos.google.cloud.speech.v2.ISpeechRecognitionResult[],
   speakerDiarization: boolean,
 ): string {
-  const results = response.results ?? [];
   const alternatives = results.flatMap((result) => result.alternatives ?? []);
   const plain = alternatives
     .map((alt) => alt.transcript?.trim())
@@ -109,37 +101,48 @@ function transcriptFromResponse(
   return formatDialogue(words) || plain;
 }
 
-async function recognizeWithGoogle(
+async function batchRecognizeFromGcs(
   client: SpeechClient,
-  base: {
-    projectId: string;
-    model: string;
-    language: string;
-    keyterms: string[];
-    speakerDiarization: boolean;
-    audio: Buffer;
-  },
+  config: GoogleRecognizeConfig,
+  gcsUri: string,
 ): Promise<string> {
   const attempts: Array<{ speakerDiarization: boolean; includeAdaptation: boolean }> = [
-    { speakerDiarization: base.speakerDiarization, includeAdaptation: true },
+    { speakerDiarization: config.speakerDiarization, includeAdaptation: true },
     { speakerDiarization: false, includeAdaptation: true },
     { speakerDiarization: false, includeAdaptation: false },
   ];
 
   let lastError: unknown;
   for (const attempt of attempts) {
-    const request = buildRecognizeRequest({
-      ...base,
-      speakerDiarization: attempt.speakerDiarization,
-      includeAdaptation: attempt.includeAdaptation,
-    });
-
     try {
-      const [response] = await client.recognize(request);
-      return transcriptFromResponse(response, attempt.speakerDiarization);
+      const [operation] = await client.batchRecognize({
+        recognizer: `projects/${config.projectId}/locations/global/recognizers/_`,
+        config: buildRecognitionConfig({
+          ...config,
+          speakerDiarization: attempt.speakerDiarization,
+          includeAdaptation: attempt.includeAdaptation,
+        }),
+        files: [{ uri: gcsUri }],
+        recognitionOutputConfig: {
+          inlineResponseConfig: {},
+        },
+      });
+
+      const [response] = await Promise.race([
+        operation.promise(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("Google batch transcription timed out")),
+            BATCH_TIMEOUT_MS,
+          );
+        }),
+      ]);
+
+      const inline = response.results?.[gcsUri]?.transcript?.results ?? [];
+      return transcriptFromBatchResults(inline, attempt.speakerDiarization);
     } catch (error) {
       lastError = error;
-      if (!isInvalidConfigError(error)) {
+      if (!isRetryableConfigError(error)) {
         throw error;
       }
     }
@@ -230,11 +233,11 @@ function createSpeechClient(): SpeechClient {
 
 export class GoogleTranscriptionProvider implements TranscriptionProvider {
   async transcribe(input: TranscriptionInput): Promise<TranscriptionResult> {
-    const projectId = getGoogleProjectId();
-    if (!projectId) {
-      throw new Error("GOOGLE_CLOUD_PROJECT is not configured");
+    if (!isGoogleSttConfigured()) {
+      throw new Error(googleSttConfigError());
     }
 
+    const projectId = getGoogleProjectId()!;
     const prepared = await prepareAudioForStt(
       input.filePath,
       input.filename,
@@ -242,23 +245,32 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
     );
 
     try {
-      const audio = await readFile(prepared.filePath);
       const client = createSpeechClient();
       const keyterms = input.options.keyterms.filter(Boolean).slice(0, 500);
       const isReference = Boolean(input.options.isReference);
-      const wantDiarization = input.options.speakerDiarization && !isReference;
-      const model = resolveGoogleModel(input.model, wantDiarization, isReference);
+      const model = resolveGoogleModel(input.model);
+      const speakerDiarization =
+        Boolean(input.options.speakerDiarization) &&
+        !isReference &&
+        model === "chirp_3";
 
-      const text = await recognizeWithGoogle(client, {
-        projectId,
-        model,
-        language: input.options.language,
-        keyterms,
-        speakerDiarization: wantDiarization,
-        audio,
-      });
-
-      return { text, durationMs: null };
+      const uploaded = await uploadAudioToGcs(prepared.filePath, prepared.filename);
+      try {
+        const text = await batchRecognizeFromGcs(
+          client,
+          {
+            projectId,
+            model,
+            language: input.options.language,
+            keyterms,
+            speakerDiarization,
+          },
+          uploaded.gcsUri,
+        );
+        return { text, durationMs: null };
+      } finally {
+        await deleteGcsObject(uploaded.bucket, uploaded.objectName).catch(() => undefined);
+      }
     } finally {
       await prepared.cleanup?.();
     }
