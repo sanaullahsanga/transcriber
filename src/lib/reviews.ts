@@ -1,5 +1,5 @@
 import { Op } from "sequelize";
-import { loadJobsForCall } from "./call-jobs";
+import { isComparisonJob, loadJobsForCall } from "./call-jobs";
 import {
   aggregateProviderStats,
   buildJobMetrics,
@@ -69,9 +69,7 @@ async function backfillEmptyFinalizedReferences() {
     }
 
     const referenceJob = findReferenceJob(jobs);
-    const fallback =
-      referenceJob?.transcript?.trim() ||
-      jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim();
+    const fallback = referenceJob?.transcript?.trim();
     if (!fallback) continue;
 
     await review.update({
@@ -157,15 +155,16 @@ function buildCallMetrics(
 ): CallReviewMetrics {
   const referenceJob = findReferenceJob(jobs);
   const savedReference = review?.referenceTranscript?.trim() ?? "";
-  const fallbackReference =
-    referenceJob?.transcript?.trim() ||
-    jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim() ||
-    "";
-  const displayReference = savedReference || fallbackReference;
+  const referenceFromJob = referenceJob?.transcript?.trim() ?? "";
+  const savedFromReferenceProvider =
+    Boolean(savedReference) && review?.referenceSourceProvider === REFERENCE_PROVIDER;
+  const displayReference = savedFromReferenceProvider
+    ? savedReference
+    : referenceFromJob || savedReference;
   // Finalized reviews must contribute to dashboard WER even when reference was
   // only visible as UI prefill and not persisted historically.
   const referenceForWer =
-    savedReference || (review?.status === "finalized" ? fallbackReference : "");
+    displayReference || (review?.status === "finalized" ? referenceFromJob : "");
 
   return {
     reviewId: review?.id ?? null,
@@ -175,14 +174,66 @@ function buildCallMetrics(
     reviewStatus: review?.status ?? null,
     referenceTranscript: displayReference,
     referenceSourceProvider:
-      review?.referenceSourceProvider ?? (referenceJob ? REFERENCE_PROVIDER : null),
+      review?.referenceSourceProvider ??
+      (referenceFromJob ? REFERENCE_PROVIDER : null),
     audioJobId:
-      jobs.find((j) => !j.options?.isReference)?.id ?? jobs[0]?.id ?? null,
+      jobs.find((j) => isComparisonJob(j))?.id ?? jobs[0]?.id ?? null,
     initialSlots: meta.initialSlots,
-    runSlots: jobs.map((job) => ({ provider: job.provider, model: job.model })),
+    runSlots: jobs
+      .filter(isComparisonJob)
+      .map((job) => ({ provider: job.provider, model: job.model })),
     jobs: buildJobMetrics(jobs, referenceForWer),
     createdAt: meta.createdAt.toISOString(),
   };
+}
+
+export async function persistReferenceTranscript(input: {
+  benchmarkRunId?: string;
+  transcriptionJobId?: string;
+  referenceTranscript: string;
+  referenceSourceJobId: string;
+}) {
+  await initDb();
+
+  if (!input.benchmarkRunId && !input.transcriptionJobId) {
+    throw new Error("benchmarkRunId or transcriptionJobId is required");
+  }
+
+  let originalFilename = "";
+  if (input.benchmarkRunId) {
+    const run = await BenchmarkRun.findByPk(input.benchmarkRunId);
+    if (!run) throw new Error("Benchmark run not found");
+    originalFilename = run.originalFilename;
+  } else {
+    const job = await TranscriptionJob.findByPk(input.transcriptionJobId!);
+    if (!job) throw new Error("Job not found");
+    originalFilename = job.originalFilename;
+  }
+
+  const where = input.benchmarkRunId
+    ? { benchmarkRunId: input.benchmarkRunId }
+    : { transcriptionJobId: input.transcriptionJobId! };
+
+  const existing = await CallReview.findOne({ where });
+  const referenceTranscript = input.referenceTranscript.trim();
+
+  if (existing) {
+    await existing.update({
+      referenceTranscript,
+      referenceSourceJobId: input.referenceSourceJobId,
+      referenceSourceProvider: REFERENCE_PROVIDER,
+    });
+    return existing;
+  }
+
+  return CallReview.create({
+    ...where,
+    originalFilename,
+    referenceTranscript,
+    referenceSourceJobId: input.referenceSourceJobId,
+    referenceSourceProvider: REFERENCE_PROVIDER,
+    status: "draft",
+  });
 }
 
 export async function getBenchmarkReview(runId: string) {

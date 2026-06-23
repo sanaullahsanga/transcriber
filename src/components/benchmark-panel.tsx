@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
+import { providerConfigError } from "@/lib/providers";
 import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
 
 type ProviderInfo = {
@@ -246,7 +247,7 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
     for (const slot of validSlots) {
       const provider = providers.find((p) => p.id === slot.provider);
       if (!provider?.configured) {
-        setError(`${provider?.name ?? slot.provider} is not configured`);
+        setError(provider ? providerConfigError(provider) : `${slot.provider} is not configured`);
         return;
       }
     }

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshElevenLabsReference, waitForJobCompletion } from "@/lib/call-jobs";
-import { getBenchmarkReview, getReviewableCalls } from "@/lib/reviews";
+import {
+  getBenchmarkReview,
+  getReviewableCalls,
+  persistReferenceTranscript,
+} from "@/lib/reviews";
 import { REFERENCE_PROVIDER } from "@/lib/reference-provider";
 
 export const runtime = "nodejs";
@@ -30,13 +34,22 @@ export async function POST(request: NextRequest) {
       completedJob = await waitForJobCompletion(job.id);
     }
 
+    const referenceTranscript = completedJob.transcript?.trim() ?? "";
+
+    if (referenceTranscript) {
+      await persistReferenceTranscript({
+        benchmarkRunId: body.benchmarkRunId,
+        transcriptionJobId: body.transcriptionJobId,
+        referenceTranscript,
+        referenceSourceJobId: completedJob.id,
+      });
+    }
+
     const call = body.benchmarkRunId
       ? await getBenchmarkReview(body.benchmarkRunId)
       : (
           await getReviewableCalls()
         ).calls.find((c) => c.transcriptionJobId === body.transcriptionJobId) ?? null;
-
-    const referenceTranscript = completedJob.transcript?.trim() ?? "";
 
     return NextResponse.json({
       jobId: completedJob.id,

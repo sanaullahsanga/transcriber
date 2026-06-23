@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { SpeechClient } from "@google-cloud/speech/build/src/v2";
 import type { protos } from "@google-cloud/speech";
+import {
+  getGoogleProjectId,
+  googleSttConfigError,
+  loadGoogleCredentials,
+} from "../google-auth";
 import { prepareAudioForStt } from "../audio/normalize";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 
@@ -74,31 +79,22 @@ function formatDialogue(words: GoogleWord[]): string {
 }
 
 function createSpeechClient(): SpeechClient {
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+  const projectId = getGoogleProjectId();
   if (!projectId) {
     throw new Error("GOOGLE_CLOUD_PROJECT is not configured");
   }
 
-  const credentialsJson = process.env.GOOGLE_SPEECH_CREDENTIALS_JSON;
-  if (credentialsJson) {
-    return new SpeechClient({
-      projectId,
-      credentials: JSON.parse(credentialsJson) as object,
-    });
+  const credentials = loadGoogleCredentials();
+  if (!credentials) {
+    throw new Error(googleSttConfigError());
   }
 
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    throw new Error(
-      "Google STT requires GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SPEECH_CREDENTIALS_JSON",
-    );
-  }
-
-  return new SpeechClient({ projectId });
+  return new SpeechClient({ projectId, credentials });
 }
 
 export class GoogleTranscriptionProvider implements TranscriptionProvider {
   async transcribe(input: TranscriptionInput): Promise<TranscriptionResult> {
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+    const projectId = getGoogleProjectId();
     if (!projectId) {
       throw new Error("GOOGLE_CLOUD_PROJECT is not configured");
     }

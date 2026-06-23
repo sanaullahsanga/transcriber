@@ -27,7 +27,7 @@ export type CallReviewMetrics = {
   referenceSourceProvider: string | null;
   audioJobId: string | null;
   initialSlots: CallSlotConfig[];
-  /** All provider/model jobs on this call, including reference-only runs. */
+  /** Comparison provider/model jobs on this call (excludes reference-only runs). */
   runSlots: CallSlotConfig[];
   jobs: JobWerMetric[];
   createdAt: string | null;

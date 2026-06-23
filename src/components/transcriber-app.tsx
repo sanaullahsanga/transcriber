@@ -29,8 +29,8 @@ import { ListSearch } from "@/components/ui/list-search";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
-import type { PaginationMeta } from "@/lib/pagination";
+import { providerConfigError } from "@/lib/providers";
+import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
 import { formatBytes, formatDate, formatDuration } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
 
@@ -194,7 +194,7 @@ export function TranscriberApp() {
 
     const provider = providers.find((p) => p.id === settings.defaultProvider);
     if (!provider?.configured) {
-      setError(`${provider?.name ?? "Provider"} API key is not configured in environment`);
+      setError(provider ? providerConfigError(provider) : "Provider is not configured");
       return;
     }
 

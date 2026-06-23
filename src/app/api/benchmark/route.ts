@@ -7,7 +7,8 @@ import type { BenchmarkSlotConfig } from "@/lib/models/BenchmarkRun";
 import type { JobOptions } from "@/lib/models/TranscriptionJob";
 import { getUploadDir } from "@/lib/paths";
 import { buildPaginationMeta, parsePaginationParams } from "@/lib/pagination";
-import { getProvider, isProviderConfigured, resolveModel } from "@/lib/providers";
+import { getProvider, providerConfigError, resolveModel } from "@/lib/providers";
+import { isProviderConfigured } from "@/lib/providers-config";
 import { createReferenceJobForBenchmark } from "@/lib/call-jobs";
 import { enqueueJobs, ensureQueueRunning } from "@/lib/queue";
 
@@ -115,7 +116,7 @@ export async function POST(request: NextRequest) {
       }
       if (!isProviderConfigured(provider)) {
         return NextResponse.json(
-          { error: `${provider.name} API key is not configured` },
+          { error: providerConfigError(provider) },
           { status: 400 },
         );
       }

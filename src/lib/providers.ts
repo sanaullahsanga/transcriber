@@ -70,22 +70,14 @@ export function getProvider(id: string): ProviderConfig | undefined {
   return PROVIDERS[id as ProviderId];
 }
 
-export function isProviderConfigured(provider: ProviderConfig): boolean {
+export function providerConfigError(provider: { id: string; name: string }): string {
   if (provider.id === "google") {
-    return Boolean(
-      process.env.GOOGLE_CLOUD_PROJECT &&
-        (process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-          process.env.GOOGLE_SPEECH_CREDENTIALS_JSON),
+    return (
+      "Google STT is not configured. Set GOOGLE_CLOUD_PROJECT and " +
+      "GOOGLE_APPLICATION_CREDENTIALS (path to service account JSON), then restart the server."
     );
   }
-  return Boolean(process.env[provider.envKey]);
-}
-
-export function listProviders() {
-  return Object.values(PROVIDERS).map((provider) => ({
-    ...provider,
-    configured: isProviderConfigured(provider),
-  }));
+  return `${provider.name} API key is not configured in environment`;
 }
 
 export function resolveModel(providerId: string, model?: string | null): string {

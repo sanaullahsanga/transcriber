@@ -5,12 +5,8 @@ import { resetJobForRetranscribe } from "./job-audio";
 import { BenchmarkRun, TranscriptionJob, initDb } from "./models";
 import type { JobOptions } from "./models/TranscriptionJob";
 import { getUploadDir, resolveStoredPath } from "./paths";
-import {
-  PROVIDERS,
-  getProvider,
-  isProviderConfigured,
-  resolveModel,
-} from "./providers";
+import { getProvider, resolveModel, PROVIDERS } from "./providers";
+import { isProviderConfigured } from "./providers-config";
 import { REFERENCE_PROVIDER } from "./reference-provider";
 import { enqueueJob, ensureQueueRunning } from "./queue";
 import type { CallSlotConfig } from "./review-metrics";
@@ -181,7 +177,13 @@ export async function refreshElevenLabsReference(input: {
   }
 
   const source = await resolveAudioSource(input);
-  const elevenlabsJob = source.jobs.find((job) => job.provider === REFERENCE_PROVIDER);
+  const referenceJob = source.jobs.find(
+    (job) => job.provider === REFERENCE_PROVIDER && isReferenceJob(job),
+  );
+  const comparisonElevenlabsJob = source.jobs.find(
+    (job) => job.provider === REFERENCE_PROVIDER && isComparisonJob(job),
+  );
+  const elevenlabsJob = referenceJob ?? comparisonElevenlabsJob;
 
   if (elevenlabsJob) {
     return resetJobForRetranscribe(elevenlabsJob.id);
