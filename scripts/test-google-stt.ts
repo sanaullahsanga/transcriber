@@ -45,7 +45,7 @@ async function main() {
     options: {
       language: "en",
       keyterms: [],
-      speakerDiarization: false,
+      speakerDiarization: true,
       isReference: true,
       normalize: true,
     },

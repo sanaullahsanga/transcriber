@@ -261,12 +261,9 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
       const location = getGoogleSttLocation();
       const client = createSpeechClient(location);
       const keyterms = input.options.keyterms.filter(Boolean).slice(0, 500);
-      const isReference = Boolean(input.options.isReference);
       const model = resolveGoogleModel(input.model);
       const speakerDiarization =
-        Boolean(input.options.speakerDiarization) &&
-        !isReference &&
-        model === "chirp_3";
+        Boolean(input.options.speakerDiarization) && model === "chirp_3";
 
       const uploaded = await uploadAudioToGcs(prepared.filePath, prepared.filename);
       try {
