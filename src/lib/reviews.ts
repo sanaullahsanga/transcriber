@@ -1,5 +1,10 @@
 import { Op } from "sequelize";
-import { isComparisonJob, loadJobsForCall } from "./call-jobs";
+import {
+  isComparisonJob,
+  loadJobsForCall,
+  refreshElevenLabsReference,
+  waitForJobCompletion,
+} from "./call-jobs";
 import {
   aggregateProviderStats,
   buildJobMetrics,
@@ -10,6 +15,7 @@ import {
 import { REFERENCE_PROVIDER } from "./reference-provider";
 import { BenchmarkRun, CallReview, initDb, TranscriptionJob } from "./models";
 import { buildPaginationMeta } from "./pagination";
+import { ensureQueueRunning } from "./queue";
 
 type ReviewableEntry = {
   benchmarkRunId?: string;
@@ -234,6 +240,97 @@ export async function persistReferenceTranscript(input: {
     referenceSourceProvider: REFERENCE_PROVIDER,
     status: "draft",
   });
+}
+
+export type BatchReferenceResult = {
+  benchmarkRunId: string;
+  originalFilename: string;
+  ok: boolean;
+  skipped?: boolean;
+  jobId?: string;
+  wordCount?: number;
+  error?: string;
+};
+
+export async function batchApplyElevenLabsReferences(options?: {
+  /** Re-run ElevenLabs even when a completed reference transcript already exists. */
+  forceRetranscribe?: boolean;
+  /** Per-call timeout while waiting for transcription (ms). */
+  timeoutMs?: number;
+}): Promise<BatchReferenceResult[]> {
+  await initDb();
+  ensureQueueRunning();
+
+  const entries = await listReviewableEntries();
+  const results: BatchReferenceResult[] = [];
+
+  for (const [index, entry] of entries.entries()) {
+    if (!entry.benchmarkRunId) continue;
+
+    const benchmarkRunId = entry.benchmarkRunId;
+    const label = `[${index + 1}/${entries.length}] ${entry.originalFilename}`;
+
+    try {
+      if (!options?.forceRetranscribe) {
+        const jobs = await loadJobsForCall({ benchmarkRunId });
+        const referenceJob = findReferenceJob(jobs);
+        const transcript = referenceJob?.transcript?.trim();
+        if (transcript && referenceJob) {
+          await persistReferenceTranscript({
+            benchmarkRunId,
+            referenceTranscript: transcript,
+            referenceSourceJobId: referenceJob.id,
+          });
+          results.push({
+            benchmarkRunId,
+            originalFilename: entry.originalFilename,
+            ok: true,
+            skipped: true,
+            jobId: referenceJob.id,
+            wordCount: transcript.split(/\s+/).filter(Boolean).length,
+          });
+          console.log(`${label} — saved existing ElevenLabs reference`);
+          continue;
+        }
+      }
+
+      const job = await refreshElevenLabsReference({ benchmarkRunId });
+      const completed = await waitForJobCompletion(
+        job.id,
+        options?.timeoutMs ?? 600_000,
+      );
+      const referenceTranscript = completed.transcript?.trim() ?? "";
+      if (!referenceTranscript) {
+        throw new Error("ElevenLabs returned an empty transcript");
+      }
+
+      await persistReferenceTranscript({
+        benchmarkRunId,
+        referenceTranscript,
+        referenceSourceJobId: completed.id,
+      });
+
+      results.push({
+        benchmarkRunId,
+        originalFilename: entry.originalFilename,
+        ok: true,
+        jobId: completed.id,
+        wordCount: referenceTranscript.split(/\s+/).filter(Boolean).length,
+      });
+      console.log(`${label} — transcribed and saved (${results.at(-1)!.wordCount} words)`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed";
+      results.push({
+        benchmarkRunId,
+        originalFilename: entry.originalFilename,
+        ok: false,
+        error: message,
+      });
+      console.error(`${label} — failed: ${message}`);
+    }
+  }
+
+  return results;
 }
 
 export async function getBenchmarkReview(runId: string) {

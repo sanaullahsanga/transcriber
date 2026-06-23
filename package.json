@@ -11,6 +11,7 @@
     "db:seed": "tsx scripts/db-seed.ts",
     "db:refresh": "tsx scripts/db-refresh.ts",
     "db:clear-reviews": "tsx scripts/clear-reviews.ts",
+    "batch:elevenlabs-reference": "tsx scripts/batch-elevenlabs-reference.ts",
     "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {
