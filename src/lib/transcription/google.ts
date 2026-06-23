@@ -35,6 +35,64 @@ function isRetryableConfigError(error: unknown): boolean {
   );
 }
 
+function isRetryableBatchError(error: unknown): boolean {
+  if (isRetryableConfigError(error)) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /empty transcript/i.test(message);
+}
+
+function gcsObjectSuffix(uri: string): string {
+  const match = uri.match(/^gs:\/\/[^/]+\/(.+)$/);
+  if (!match) return uri;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+function gcsUrisMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  return gcsObjectSuffix(a) === gcsObjectSuffix(b);
+}
+
+function resolveBatchFileResult(
+  response: protos.google.cloud.speech.v2.IBatchRecognizeResponse,
+  gcsUri: string,
+): protos.google.cloud.speech.v2.IBatchRecognizeFileResult | undefined {
+  const map = response.results ?? {};
+  if (map[gcsUri]) return map[gcsUri];
+
+  for (const [key, value] of Object.entries(map)) {
+    if (gcsUrisMatch(key, gcsUri)) return value;
+  }
+
+  const values = Object.values(map);
+  return values.length === 1 ? values[0] : undefined;
+}
+
+function inlineResultsFromBatch(
+  response: protos.google.cloud.speech.v2.IBatchRecognizeResponse,
+  gcsUri: string,
+): protos.google.cloud.speech.v2.ISpeechRecognitionResult[] {
+  const file = resolveBatchFileResult(response, gcsUri);
+  if (!file) {
+    const keys = Object.keys(response.results ?? {});
+    throw new Error(
+      `Google STT batch response missing results for ${gcsUri}` +
+        (keys.length ? ` (response keys: ${keys.join(", ")})` : ""),
+    );
+  }
+
+  if (file.error) {
+    const code = file.error.code ?? "unknown";
+    const message = file.error.message ?? "batch file failed";
+    throw new Error(`Google STT batch file error (${code}): ${message}`);
+  }
+
+  return file.transcript?.results ?? [];
+}
+
 function recognizerPath(projectId: string, location: string): string {
   return `projects/${projectId}/locations/${location}/recognizers/_`;
 }
@@ -89,22 +147,33 @@ function transcriptFromBatchResults(
   speakerDiarization: boolean,
 ): string {
   const alternatives = results.flatMap((result) => result.alternatives ?? []);
+  const words = alternatives.flatMap((alt) => alt.words ?? []);
+
+  if (speakerDiarization && words.length > 0) {
+    const dialogue = formatDialogue(words).trim();
+    if (dialogue) return dialogue;
+  }
+
   const plain = alternatives
     .map((alt) => alt.transcript?.trim())
     .filter(Boolean)
     .join("\n")
     .trim();
 
-  if (!plain) {
-    throw new Error("Google STT returned an empty transcript");
-  }
-
-  if (!speakerDiarization) {
+  if (plain) {
     return plain;
   }
 
-  const words = alternatives.flatMap((alt) => alt.words ?? []);
-  return formatDialogue(words) || plain;
+  if (words.length > 0) {
+    const stitched = words
+      .map((word) => word.word ?? "")
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (stitched) return stitched;
+  }
+
+  throw new Error("Google STT returned an empty transcript");
 }
 
 async function batchRecognizeFromGcs(
@@ -144,11 +213,11 @@ async function batchRecognizeFromGcs(
         }),
       ]);
 
-      const inline = response.results?.[gcsUri]?.transcript?.results ?? [];
+      const inline = inlineResultsFromBatch(response, gcsUri);
       return transcriptFromBatchResults(inline, attempt.speakerDiarization);
     } catch (error) {
       lastError = error;
-      if (!isRetryableConfigError(error)) {
+      if (!isRetryableBatchError(error)) {
         throw error;
       }
     }
@@ -260,7 +329,9 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
     try {
       const location = getGoogleSttLocation();
       const client = createSpeechClient(location);
-      const keyterms = input.options.keyterms.filter(Boolean).slice(0, 500);
+      const keyterms = input.options.isReference
+        ? []
+        : input.options.keyterms.filter(Boolean).slice(0, 500);
       const model = resolveGoogleModel(input.model);
       const speakerDiarization =
         Boolean(input.options.speakerDiarization) && model === "chirp_3";

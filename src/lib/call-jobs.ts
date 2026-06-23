@@ -150,6 +150,7 @@ export async function createReferenceJobForBenchmark(run: BenchmarkRun): Promise
     ...run.options,
     isReference: true,
     speakerDiarization: true,
+    keyterms: [],
   };
 
   const job = await TranscriptionJob.create({
@@ -205,6 +206,7 @@ export async function refreshReferenceTranscript(input: {
     ...source.options,
     isReference: true,
     speakerDiarization: true,
+    keyterms: [],
   };
 
   const job = await TranscriptionJob.create({

@@ -79,14 +79,14 @@ export async function prepareAudioForStt(
   }
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "transcriber-audio-"));
-  const outputPath = path.join(tempDir, "normalized.mp3");
+  const outputPath = path.join(tempDir, "normalized.wav");
 
   await runFfmpeg(inputPath, outputPath);
 
   return {
     filePath: outputPath,
-    filename: path.basename(originalFilename, path.extname(originalFilename)) + ".mp3",
-    mimeType: "audio/mpeg",
+    filename: path.basename(originalFilename, path.extname(originalFilename)) + ".wav",
+    mimeType: "audio/wav",
     cleanup: async () => {
       // Only removes ffmpeg temp dir — original upload in UPLOAD_DIR is never deleted.
       await rm(tempDir, { recursive: true, force: true });
