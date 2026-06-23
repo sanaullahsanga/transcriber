@@ -156,7 +156,10 @@ export async function createReferenceJobForBenchmark(run: BenchmarkRun): Promise
     mimeType: run.mimeType,
     fileSizeBytes: run.fileSizeBytes,
     provider: REFERENCE_PROVIDER,
-    model: resolveModel(REFERENCE_PROVIDER),
+    model:
+      REFERENCE_PROVIDER === "google"
+        ? resolveModel(REFERENCE_PROVIDER, "telephony")
+        : resolveModel(REFERENCE_PROVIDER),
     options: referenceOptions,
     status: "pending",
     benchmarkRunId: run.id,
@@ -207,7 +210,10 @@ export async function refreshReferenceTranscript(input: {
     mimeType: source.mimeType,
     fileSizeBytes: source.fileSizeBytes,
     provider: REFERENCE_PROVIDER,
-    model: resolveModel(REFERENCE_PROVIDER),
+    model:
+      REFERENCE_PROVIDER === "google"
+        ? resolveModel(REFERENCE_PROVIDER, "telephony")
+        : resolveModel(REFERENCE_PROVIDER),
     options: referenceOptions,
     status: "pending",
     benchmarkRunId: source.benchmarkRunId,
