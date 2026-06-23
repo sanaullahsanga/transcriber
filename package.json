@@ -13,6 +13,7 @@
     "db:clear-reviews": "tsx scripts/clear-reviews.ts",
     "batch:reference": "tsx scripts/batch-reference.ts",
     "batch:elevenlabs-reference": "tsx scripts/batch-reference.ts",
+    "test:google-stt": "tsx scripts/test-google-stt.ts",
     "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {

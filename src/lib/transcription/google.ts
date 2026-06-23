@@ -5,6 +5,7 @@ import { deleteGcsObject, uploadAudioToGcs } from "../google-gcs";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 import {
   getGoogleProjectId,
+  getGoogleSttLocation,
   googleSttConfigError,
   isGoogleSttConfigured,
   loadGoogleCredentials,
@@ -29,8 +30,13 @@ function isRetryableConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
     /invalid_argument/i.test(message) &&
-    /unsupported|not support|diarization|does not exist in the location/i.test(message)
+    /unsupported|not support|diarization/i.test(message) &&
+    !/does not exist in the location/i.test(message)
   );
+}
+
+function recognizerPath(projectId: string, location: string): string {
+  return `projects/${projectId}/locations/${location}/recognizers/_`;
 }
 
 type GoogleRecognizeConfig = {
@@ -103,7 +109,7 @@ function transcriptFromBatchResults(
 
 async function batchRecognizeFromGcs(
   client: SpeechClient,
-  config: GoogleRecognizeConfig,
+  config: GoogleRecognizeConfig & { location: string },
   gcsUri: string,
 ): Promise<string> {
   const attempts: Array<{ speakerDiarization: boolean; includeAdaptation: boolean }> = [
@@ -116,7 +122,7 @@ async function batchRecognizeFromGcs(
   for (const attempt of attempts) {
     try {
       const [operation] = await client.batchRecognize({
-        recognizer: `projects/${config.projectId}/locations/global/recognizers/_`,
+        recognizer: recognizerPath(config.projectId, config.location),
         config: buildRecognitionConfig({
           ...config,
           speakerDiarization: attempt.speakerDiarization,
@@ -217,7 +223,7 @@ function formatDialogue(words: GoogleWord[]): string {
   return lines.join("\n\n");
 }
 
-function createSpeechClient(): SpeechClient {
+function createSpeechClient(location: string): SpeechClient {
   const projectId = getGoogleProjectId();
   if (!projectId) {
     throw new Error("GOOGLE_CLOUD_PROJECT is not configured");
@@ -228,7 +234,14 @@ function createSpeechClient(): SpeechClient {
     throw new Error(googleSttConfigError());
   }
 
-  return new SpeechClient({ projectId, credentials });
+  const apiEndpoint =
+    location === "global" ? undefined : `${location}-speech.googleapis.com`;
+
+  return new SpeechClient({
+    projectId,
+    credentials,
+    ...(apiEndpoint ? { apiEndpoint } : {}),
+  });
 }
 
 export class GoogleTranscriptionProvider implements TranscriptionProvider {
@@ -245,7 +258,8 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
     );
 
     try {
-      const client = createSpeechClient();
+      const location = getGoogleSttLocation();
+      const client = createSpeechClient(location);
       const keyterms = input.options.keyterms.filter(Boolean).slice(0, 500);
       const isReference = Boolean(input.options.isReference);
       const model = resolveGoogleModel(input.model);
@@ -260,6 +274,7 @@ export class GoogleTranscriptionProvider implements TranscriptionProvider {
           client,
           {
             projectId,
+            location,
             model,
             language: input.options.language,
             keyterms,

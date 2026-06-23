@@ -2,6 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export const DEFAULT_GOOGLE_CREDENTIALS_FILE = "google-service-account.json";
+/** chirp_3 and telephony (v2) are not available in `global` — use `us` or `eu`. */
+export const DEFAULT_GOOGLE_STT_LOCATION = "us";
+
+export function getGoogleSttLocation(): string {
+  const location = process.env.GOOGLE_STT_LOCATION?.trim();
+  return location || DEFAULT_GOOGLE_STT_LOCATION;
+}
 
 export function getGoogleSttGcsBucket(): string | undefined {
   const bucket = process.env.GOOGLE_STT_GCS_BUCKET?.trim();
@@ -59,6 +66,7 @@ export function googleSttConfigError(): string {
   return (
     "Google STT is not configured. Set GOOGLE_CLOUD_PROJECT, GOOGLE_STT_GCS_BUCKET " +
     "(Cloud Storage bucket for batch transcription of 2–10 min calls), and either " +
-    "GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SPEECH_CREDENTIALS_JSON, then restart."
+    "GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SPEECH_CREDENTIALS_JSON. " +
+    "Optional: GOOGLE_STT_LOCATION (default us — required for chirp_3). Then restart."
   );
 }
