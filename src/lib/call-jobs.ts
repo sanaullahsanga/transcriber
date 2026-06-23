@@ -125,10 +125,10 @@ export async function createReferenceJobForBenchmark(run: BenchmarkRun): Promise
   }
 
   const existingJobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: run.id } });
-  const comparisonElevenlabs = existingJobs.find(
+  const comparisonReference = existingJobs.find(
     (job) => job.provider === REFERENCE_PROVIDER && isComparisonJob(job),
   );
-  if (comparisonElevenlabs) {
+  if (comparisonReference) {
     return null;
   }
 
@@ -166,27 +166,28 @@ export async function createReferenceJobForBenchmark(run: BenchmarkRun): Promise
   return job;
 }
 
-export async function refreshElevenLabsReference(input: {
+export async function refreshReferenceTranscript(input: {
   benchmarkRunId?: string;
   transcriptionJobId?: string;
 }): Promise<TranscriptionJob> {
   await initDb();
 
-  if (!isProviderConfigured(PROVIDERS[REFERENCE_PROVIDER])) {
-    throw new Error("ElevenLabs API key is not configured");
+  const referenceProvider = PROVIDERS[REFERENCE_PROVIDER];
+  if (!isProviderConfigured(referenceProvider)) {
+    throw new Error(`${referenceProvider.name} is not configured for reference transcripts`);
   }
 
   const source = await resolveAudioSource(input);
   const referenceJob = source.jobs.find(
     (job) => job.provider === REFERENCE_PROVIDER && isReferenceJob(job),
   );
-  const comparisonElevenlabsJob = source.jobs.find(
+  const comparisonReferenceJob = source.jobs.find(
     (job) => job.provider === REFERENCE_PROVIDER && isComparisonJob(job),
   );
-  const elevenlabsJob = referenceJob ?? comparisonElevenlabsJob;
+  const existingReferenceJob = referenceJob ?? comparisonReferenceJob;
 
-  if (elevenlabsJob) {
-    return resetJobForRetranscribe(elevenlabsJob.id);
+  if (existingReferenceJob) {
+    return resetJobForRetranscribe(existingReferenceJob.id);
   }
 
   const uploadDir = getUploadDir();
@@ -217,6 +218,9 @@ export async function refreshElevenLabsReference(input: {
   ensureQueueRunning();
   return job;
 }
+
+/** @deprecated Use refreshReferenceTranscript */
+export const refreshElevenLabsReference = refreshReferenceTranscript;
 
 export async function addProviderJobToCall(input: {
   benchmarkRunId?: string;

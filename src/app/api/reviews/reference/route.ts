@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refreshElevenLabsReference, waitForJobCompletion } from "@/lib/call-jobs";
+import { refreshReferenceTranscript, waitForJobCompletion } from "@/lib/call-jobs";
 import {
   getBenchmarkReview,
   getReviewableCalls,
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const job = await refreshElevenLabsReference({
+    const job = await refreshReferenceTranscript({
       benchmarkRunId: body.benchmarkRunId,
       transcriptionJobId: body.transcriptionJobId,
     });

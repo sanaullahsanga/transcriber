@@ -419,7 +419,7 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                 Compare providers
               </CardTitle>
               <CardDescription>
-                Up to 3 provider/model slots per file. ElevenLabs also runs automatically for
+                Up to 3 provider/model slots per file. Google STT also runs automatically for
                 reviewer reference when configured.
               </CardDescription>
             </CardHeader>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { batchApplyElevenLabsReferences } from "@/lib/reviews";
+import { batchApplyReferenceTranscripts } from "@/lib/reviews";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
       force?: boolean;
     };
 
-    const results = await batchApplyElevenLabsReferences({
+    const results = await batchApplyReferenceTranscripts({
       forceRetranscribe: body.force === true,
     });
 

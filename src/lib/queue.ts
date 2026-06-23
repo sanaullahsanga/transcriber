@@ -1,5 +1,6 @@
 import { TranscriptionJob, initDb } from "./models";
 import { ensureJobAudioFile } from "./job-audio";
+import { REFERENCE_PROVIDER } from "./reference-provider";
 import { transcribeAudio } from "./transcription";
 
 let processing = false;
@@ -72,6 +73,20 @@ async function processQueue() {
           completedAt: new Date(),
           errorMessage: null,
         });
+
+        if (
+          job.provider === REFERENCE_PROVIDER &&
+          job.options?.isReference &&
+          job.benchmarkRunId &&
+          result.text?.trim()
+        ) {
+          const { persistReferenceTranscript } = await import("./reviews");
+          await persistReferenceTranscript({
+            benchmarkRunId: job.benchmarkRunId,
+            referenceTranscript: result.text,
+            referenceSourceJobId: job.id,
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Transcription failed";
         await job.update({

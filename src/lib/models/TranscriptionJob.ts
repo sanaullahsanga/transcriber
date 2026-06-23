@@ -14,7 +14,7 @@ export type JobOptions = {
   speakerDiarization: boolean;
   keyterms: string[];
   language: string;
-  /** Dedicated ElevenLabs job used only for reviewer reference prefill. */
+  /** When true, this job is the automatic reference transcript (not a comparison slot). */
   isReference?: boolean;
 };
 

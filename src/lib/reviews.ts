@@ -2,7 +2,7 @@ import { Op } from "sequelize";
 import {
   isComparisonJob,
   loadJobsForCall,
-  refreshElevenLabsReference,
+  refreshReferenceTranscript,
   waitForJobCompletion,
 } from "./call-jobs";
 import {
@@ -252,8 +252,8 @@ export type BatchReferenceResult = {
   error?: string;
 };
 
-export async function batchApplyElevenLabsReferences(options?: {
-  /** Re-run ElevenLabs even when a completed reference transcript already exists. */
+export async function batchApplyReferenceTranscripts(options?: {
+  /** Re-run reference STT even when a saved review reference already exists. */
   forceRetranscribe?: boolean;
   /** Per-call timeout while waiting for transcription (ms). */
   timeoutMs?: number;
@@ -272,6 +272,20 @@ export async function batchApplyElevenLabsReferences(options?: {
 
     try {
       if (!options?.forceRetranscribe) {
+        const existingReview = await CallReview.findOne({ where: { benchmarkRunId } });
+        if (existingReview?.referenceTranscript?.trim()) {
+          results.push({
+            benchmarkRunId,
+            originalFilename: entry.originalFilename,
+            ok: true,
+            skipped: true,
+            jobId: existingReview.referenceSourceJobId ?? undefined,
+            wordCount: existingReview.referenceTranscript.split(/\s+/).filter(Boolean).length,
+          });
+          console.log(`${label} — review reference already saved`);
+          continue;
+        }
+
         const jobs = await loadJobsForCall({ benchmarkRunId });
         const referenceJob = findReferenceJob(jobs);
         const transcript = referenceJob?.transcript?.trim();
@@ -289,19 +303,19 @@ export async function batchApplyElevenLabsReferences(options?: {
             jobId: referenceJob.id,
             wordCount: transcript.split(/\s+/).filter(Boolean).length,
           });
-          console.log(`${label} — saved existing ElevenLabs reference`);
+          console.log(`${label} — saved existing ${REFERENCE_PROVIDER} reference job`);
           continue;
         }
       }
 
-      const job = await refreshElevenLabsReference({ benchmarkRunId });
+      const job = await refreshReferenceTranscript({ benchmarkRunId });
       const completed = await waitForJobCompletion(
         job.id,
         options?.timeoutMs ?? 600_000,
       );
       const referenceTranscript = completed.transcript?.trim() ?? "";
       if (!referenceTranscript) {
-        throw new Error("ElevenLabs returned an empty transcript");
+        throw new Error(`${REFERENCE_PROVIDER} returned an empty transcript`);
       }
 
       await persistReferenceTranscript({
@@ -332,6 +346,9 @@ export async function batchApplyElevenLabsReferences(options?: {
 
   return results;
 }
+
+/** @deprecated Use batchApplyReferenceTranscripts */
+export const batchApplyElevenLabsReferences = batchApplyReferenceTranscripts;
 
 export async function getBenchmarkReview(runId: string) {
   await initDb();
