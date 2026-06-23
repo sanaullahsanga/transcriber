@@ -10,6 +10,7 @@
     "db:sync": "tsx scripts/db-sync.ts",
     "db:seed": "tsx scripts/db-seed.ts",
     "db:refresh": "tsx scripts/db-refresh.ts",
+    "db:clear-reviews": "tsx scripts/clear-reviews.ts",
     "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {

@@ -304,7 +304,7 @@ export function TranscriberApp() {
             </TabsTrigger>
             <TabsTrigger value="review">
               <ClipboardList className="h-4 w-4" />
-              WER Review
+              Review
             </TabsTrigger>
           </TabsList>
 
