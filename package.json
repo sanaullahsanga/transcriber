@@ -13,6 +13,7 @@
     "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {
+    "@google-cloud/speech": "^7.4.0",
     "@radix-ui/react-dialog": "^1.1.17",
     "@radix-ui/react-label": "^2.1.10",
     "@radix-ui/react-select": "^2.3.1",
@@ -20,6 +21,8 @@
     "@radix-ui/react-switch": "^1.3.1",
     "@radix-ui/react-tabs": "^1.1.15",
     "@soniox/node": "^2.1.1",
+    "@tailwindcss/postcss": "^4",
+    "babel-plugin-react-compiler": "1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
@@ -32,8 +35,6 @@
     "sequelize": "^6.37.8",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4",
-    "@tailwindcss/postcss": "^4",
-    "babel-plugin-react-compiler": "1.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5",
     "uuid": "^14.0.1"

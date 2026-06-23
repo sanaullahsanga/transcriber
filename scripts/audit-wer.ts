@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { Op } from "sequelize";
 import { initDb, CallReview, TranscriptionJob, BenchmarkRun } from "../src/lib/models";
-import { buildJobMetrics, findDeepgramJob } from "../src/lib/review-metrics";
+import { buildJobMetrics, findReferenceJob } from "../src/lib/review-metrics";
+import { REFERENCE_PROVIDER } from "../src/lib/reference-provider";
 import { computeWordErrorRate } from "../src/lib/wer";
 import { prepareTextForWer } from "../src/lib/wer-normalize";
 
@@ -55,10 +56,10 @@ async function main() {
       source = `transcribe · ${review.originalFilename}`;
     }
 
-    const deepgram = findDeepgramJob(jobs);
+    const referenceJob = findReferenceJob(jobs);
     const savedRef = review.referenceTranscript?.trim() ?? "";
     const fallbackRef =
-      deepgram?.transcript?.trim() ||
+      referenceJob?.transcript?.trim() ||
       jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim() ||
       "";
     const refForWer = savedRef || fallbackRef;
@@ -69,14 +70,14 @@ async function main() {
     console.log(`  Saved reference words: ${savedRef.split(/\s+/).filter(Boolean).length}`);
     console.log(`  Reference used for WER words: ${refForWer.split(/\s+/).filter(Boolean).length}`);
     if (!savedRef && fallbackRef) {
-      console.log(`  ⚠ Using Deepgram/fallback reference (saved reference was empty)`);
+      console.log(`  ⚠ Using ${REFERENCE_PROVIDER}/fallback reference (saved reference was empty)`);
     }
-    if (savedRef && deepgram?.transcript?.trim() && savedRef !== deepgram.transcript.trim()) {
+    if (savedRef && referenceJob?.transcript?.trim() && savedRef !== referenceJob.transcript.trim()) {
       const savedNorm = prepareTextForWer(savedRef).split(/\s+/).filter(Boolean).length;
-      const dgNorm = prepareTextForWer(deepgram.transcript).split(/\s+/).filter(Boolean).length;
-      if (Math.abs(savedNorm - dgNorm) > 5) {
+      const refNorm = prepareTextForWer(referenceJob.transcript).split(/\s+/).filter(Boolean).length;
+      if (Math.abs(savedNorm - refNorm) > 5) {
         console.log(
-          `  ⚠ Reference differs from Deepgram (${savedNorm} vs ${dgNorm} normalized words)`,
+          `  ⚠ Reference differs from ${REFERENCE_PROVIDER} (${savedNorm} vs ${refNorm} normalized words)`,
         );
       }
     }

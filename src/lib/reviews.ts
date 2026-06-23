@@ -1,10 +1,13 @@
 import { Op } from "sequelize";
+import { loadJobsForCall } from "./call-jobs";
 import {
   aggregateProviderStats,
   buildJobMetrics,
-  findDeepgramJob,
+  findReferenceJob,
   type CallReviewMetrics,
+  type CallSlotConfig,
 } from "./review-metrics";
+import { REFERENCE_PROVIDER } from "./reference-provider";
 import { BenchmarkRun, CallReview, initDb, TranscriptionJob } from "./models";
 import { buildPaginationMeta } from "./pagination";
 
@@ -40,26 +43,15 @@ async function listReviewableEntries(): Promise<ReviewableEntry[]> {
     });
   }
 
-  const singleJobs = await TranscriptionJob.findAll({
-    where: {
-      benchmarkRunId: { [Op.is]: null },
-      status: "completed",
-      transcript: { [Op.ne]: null },
-    },
-    order: [["createdAt", "DESC"]],
-    attributes: ["id", "originalFilename", "createdAt", "transcript"],
-  });
-
-  for (const job of singleJobs) {
-    if (!job.transcript?.trim()) continue;
-    entries.push({
-      transcriptionJobId: job.id,
-      originalFilename: job.originalFilename,
-      createdAt: job.createdAt,
-    });
-  }
-
   return entries.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+function initialSlotsForTranscribeJob(jobs: TranscriptionJob[]): CallSlotConfig[] {
+  const primary = [...jobs].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  )[0];
+  if (!primary) return [];
+  return [{ provider: primary.provider, model: primary.model }];
 }
 
 async function backfillEmptyFinalizedReferences() {
@@ -71,22 +63,21 @@ async function backfillEmptyFinalizedReferences() {
   for (const review of reviews) {
     let jobs: TranscriptionJob[] = [];
     if (review.benchmarkRunId) {
-      jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: review.benchmarkRunId } });
+      jobs = await loadJobsForCall({ benchmarkRunId: review.benchmarkRunId });
     } else if (review.transcriptionJobId) {
-      const job = await TranscriptionJob.findByPk(review.transcriptionJobId);
-      if (job) jobs = [job];
+      jobs = await loadJobsForCall({ transcriptionJobId: review.transcriptionJobId });
     }
 
-    const deepgram = findDeepgramJob(jobs);
+    const referenceJob = findReferenceJob(jobs);
     const fallback =
-      deepgram?.transcript?.trim() ||
+      referenceJob?.transcript?.trim() ||
       jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim();
     if (!fallback) continue;
 
     await review.update({
       referenceTranscript: fallback,
-      referenceSourceJobId: deepgram?.id ?? review.referenceSourceJobId,
-      referenceSourceProvider: deepgram ? "deepgram" : review.referenceSourceProvider,
+      referenceSourceJobId: referenceJob?.id ?? review.referenceSourceJobId,
+      referenceSourceProvider: referenceJob ? REFERENCE_PROVIDER : review.referenceSourceProvider,
     });
   }
 }
@@ -102,9 +93,6 @@ export async function getReviewableCalls(options?: { limit?: number; offset?: nu
   const reviewByBenchmark = new Map(
     reviews.filter((r) => r.benchmarkRunId).map((r) => [r.benchmarkRunId!, r]),
   );
-  const reviewByJob = new Map(
-    reviews.filter((r) => r.transcriptionJobId).map((r) => [r.transcriptionJobId!, r]),
-  );
 
   const benchmarkRunIds = page
     .map((entry) => entry.benchmarkRunId)
@@ -115,6 +103,16 @@ export async function getReviewableCalls(options?: { limit?: number; offset?: nu
           where: { benchmarkRunId: { [Op.in]: benchmarkRunIds } },
         })
       : [];
+  const benchmarkRuns =
+    benchmarkRunIds.length > 0
+      ? await BenchmarkRun.findAll({ where: { id: { [Op.in]: benchmarkRunIds } } })
+      : [];
+  const slotsByBenchmark = new Map(
+    benchmarkRuns.map((run) => [
+      run.id,
+      run.slots.map((slot) => ({ provider: slot.provider, model: slot.model })),
+    ]),
+  );
   const jobsByBenchmark = new Map<string, TranscriptionJob[]>();
   for (const job of benchmarkJobs) {
     if (!job.benchmarkRunId) continue;
@@ -123,43 +121,21 @@ export async function getReviewableCalls(options?: { limit?: number; offset?: nu
     jobsByBenchmark.set(job.benchmarkRunId, list);
   }
 
-  const singleJobIds = page
-    .map((entry) => entry.transcriptionJobId)
-    .filter((id): id is string => Boolean(id));
-  const singleJobs =
-    singleJobIds.length > 0
-      ? await TranscriptionJob.findAll({ where: { id: { [Op.in]: singleJobIds } } })
-      : [];
-  const jobById = new Map(singleJobs.map((job) => [job.id, job]));
-
   const calls: CallReviewMetrics[] = [];
 
   for (const entry of page) {
-    if (entry.benchmarkRunId) {
-      const jobs = jobsByBenchmark.get(entry.benchmarkRunId) ?? [];
-      const review = reviewByBenchmark.get(entry.benchmarkRunId) ?? null;
-      calls.push(
-        buildCallMetrics(review, jobs, {
-          benchmarkRunId: entry.benchmarkRunId,
-          originalFilename: entry.originalFilename,
-          createdAt: entry.createdAt,
-        }),
-      );
-      continue;
-    }
+    if (!entry.benchmarkRunId) continue;
 
-    if (entry.transcriptionJobId) {
-      const job = jobById.get(entry.transcriptionJobId);
-      if (!job) continue;
-      const review = reviewByJob.get(job.id) ?? null;
-      calls.push(
-        buildCallMetrics(review, [job], {
-          transcriptionJobId: job.id,
-          originalFilename: entry.originalFilename,
-          createdAt: entry.createdAt,
-        }),
-      );
-    }
+    const jobs = jobsByBenchmark.get(entry.benchmarkRunId) ?? [];
+    const review = reviewByBenchmark.get(entry.benchmarkRunId) ?? null;
+    calls.push(
+      buildCallMetrics(review, jobs, {
+        benchmarkRunId: entry.benchmarkRunId,
+        originalFilename: entry.originalFilename,
+        createdAt: entry.createdAt,
+        initialSlots: slotsByBenchmark.get(entry.benchmarkRunId) ?? [],
+      }),
+    );
   }
 
   return {
@@ -176,12 +152,13 @@ function buildCallMetrics(
     transcriptionJobId?: string;
     originalFilename: string;
     createdAt: Date;
+    initialSlots: CallSlotConfig[];
   },
 ): CallReviewMetrics {
-  const deepgram = findDeepgramJob(jobs);
+  const referenceJob = findReferenceJob(jobs);
   const savedReference = review?.referenceTranscript?.trim() ?? "";
   const fallbackReference =
-    deepgram?.transcript?.trim() ||
+    referenceJob?.transcript?.trim() ||
     jobs.find((j) => j.status === "completed" && j.transcript?.trim())?.transcript?.trim() ||
     "";
   const displayReference = savedReference || fallbackReference;
@@ -198,8 +175,11 @@ function buildCallMetrics(
     reviewStatus: review?.status ?? null,
     referenceTranscript: displayReference,
     referenceSourceProvider:
-      review?.referenceSourceProvider ?? (deepgram ? "deepgram" : null),
-    audioJobId: jobs[0]?.id ?? null,
+      review?.referenceSourceProvider ?? (referenceJob ? REFERENCE_PROVIDER : null),
+    audioJobId:
+      jobs.find((j) => !j.options?.isReference)?.id ?? jobs[0]?.id ?? null,
+    initialSlots: meta.initialSlots,
+    runSlots: jobs.map((job) => ({ provider: job.provider, model: job.model })),
     jobs: buildJobMetrics(jobs, referenceForWer),
     createdAt: meta.createdAt.toISOString(),
   };
@@ -210,13 +190,16 @@ export async function getBenchmarkReview(runId: string) {
   const run = await BenchmarkRun.findByPk(runId);
   if (!run) return null;
 
-  const jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: runId } });
+  const jobs = await loadJobsForCall({
+    benchmarkRunId: runId,
+  });
   const review = await CallReview.findOne({ where: { benchmarkRunId: runId } });
 
   return buildCallMetrics(review, jobs, {
     benchmarkRunId: run.id,
     originalFilename: run.originalFilename,
     createdAt: run.createdAt,
+    initialSlots: run.slots.map((slot) => ({ provider: slot.provider, model: slot.model })),
   });
 }
 
@@ -228,22 +211,24 @@ export async function saveReview(input: {
 }) {
   await initDb();
 
-  let jobs: TranscriptionJob[] = [];
+  const jobs = await loadJobsForCall({
+    benchmarkRunId: input.benchmarkRunId,
+    transcriptionJobId: input.transcriptionJobId,
+  });
   let originalFilename = "";
-  let deepgram = undefined as TranscriptionJob | undefined;
+  let referenceJob = findReferenceJob(jobs);
+  let initialSlots: CallSlotConfig[] = [];
 
   if (input.benchmarkRunId) {
     const run = await BenchmarkRun.findByPk(input.benchmarkRunId);
     if (!run) throw new Error("Benchmark run not found");
     originalFilename = run.originalFilename;
-    jobs = await TranscriptionJob.findAll({ where: { benchmarkRunId: run.id } });
-    deepgram = findDeepgramJob(jobs);
+    initialSlots = run.slots.map((slot) => ({ provider: slot.provider, model: slot.model }));
   } else if (input.transcriptionJobId) {
     const job = await TranscriptionJob.findByPk(input.transcriptionJobId);
     if (!job) throw new Error("Job not found");
     originalFilename = job.originalFilename;
-    jobs = [job];
-    deepgram = job.provider === "deepgram" ? job : undefined;
+    initialSlots = initialSlotsForTranscribeJob(jobs);
   } else {
     throw new Error("benchmarkRunId or transcriptionJobId is required");
   }
@@ -256,20 +241,20 @@ export async function saveReview(input: {
     ...where,
     originalFilename,
     referenceTranscript: input.referenceTranscript.trim(),
-    referenceSourceJobId: deepgram?.id ?? null,
-    referenceSourceProvider: deepgram ? "deepgram" : null,
+    referenceSourceJobId: referenceJob?.id ?? null,
+    referenceSourceProvider: referenceJob ? REFERENCE_PROVIDER : null,
     status: input.status ?? "draft",
   });
 
   if (
     review.status === "finalized" &&
     !review.referenceTranscript.trim() &&
-    deepgram?.transcript?.trim()
+    referenceJob?.transcript?.trim()
   ) {
     await review.update({
-      referenceTranscript: deepgram.transcript.trim(),
-      referenceSourceJobId: deepgram.id,
-      referenceSourceProvider: "deepgram",
+      referenceTranscript: referenceJob.transcript.trim(),
+      referenceSourceJobId: referenceJob.id,
+      referenceSourceProvider: REFERENCE_PROVIDER,
     });
   }
 
@@ -278,6 +263,7 @@ export async function saveReview(input: {
     transcriptionJobId: input.transcriptionJobId,
     originalFilename,
     createdAt: review.createdAt,
+    initialSlots,
   });
 }
 

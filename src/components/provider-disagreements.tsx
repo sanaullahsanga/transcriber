@@ -4,6 +4,8 @@ import { useMemo } from "react";
 import { GitCompare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { REFERENCE_PROVIDER } from "@/lib/reference-provider";
+import { PROVIDERS } from "@/lib/providers";
 import {
   findDisagreementGroups,
   formatDisagreementGroup,
@@ -25,25 +27,27 @@ type ProviderDisagreementsProps = {
   maxPerProvider?: number;
 };
 
+const baselineLabel = PROVIDERS[REFERENCE_PROVIDER]?.name ?? REFERENCE_PROVIDER;
+
 function refPick(
   referenceText: string,
   group: DisagreementGroup,
   formatted: ReturnType<typeof formatDisagreementGroup>,
-): "deepgram" | "other" | "unclear" {
-  const dgPhrase = formatted.deepgram;
+): "baseline" | "other" | "unclear" {
+  const baselinePhrase = formatted.deepgram;
   const otherPhrase = formatted.other;
-  const matchesDg =
-    dgPhrase !== "(missing)" && referenceMatchesPhrase(referenceText, dgPhrase);
+  const matchesBaseline =
+    baselinePhrase !== "(missing)" && referenceMatchesPhrase(referenceText, baselinePhrase);
   const matchesOther =
     otherPhrase !== "(missing)" && referenceMatchesPhrase(referenceText, otherPhrase);
 
-  if (matchesDg && !matchesOther) return "deepgram";
-  if (matchesOther && !matchesDg) return "other";
-  if (matchesDg && matchesOther) return "unclear";
+  if (matchesBaseline && !matchesOther) return "baseline";
+  if (matchesOther && !matchesBaseline) return "other";
+  if (matchesBaseline && matchesOther) return "unclear";
 
-  const fullDg = group.deepgramWords.join(" ");
+  const fullBaseline = group.deepgramWords.join(" ");
   const fullOther = group.otherWords.join(" ");
-  if (fullDg && referenceMatchesPhrase(referenceText, fullDg)) return "deepgram";
+  if (fullBaseline && referenceMatchesPhrase(referenceText, fullBaseline)) return "baseline";
   if (fullOther && referenceMatchesPhrase(referenceText, fullOther)) return "other";
   return "unclear";
 }
@@ -60,19 +64,20 @@ export function ProviderDisagreements({
   maxPerProvider = 20,
 }: ProviderDisagreementsProps) {
   const comparisons = useMemo(() => {
-    const deepgram = jobs.find(
-      (j) => j.provider === "deepgram" && j.status === "completed" && j.transcript?.trim(),
+    const baseline = jobs.find(
+      (j) =>
+        j.provider === REFERENCE_PROVIDER && j.status === "completed" && j.transcript?.trim(),
     );
-    if (!deepgram?.transcript) return [];
+    if (!baseline?.transcript) return [];
 
     const others = jobs.filter(
       (j) =>
-        j.provider !== "deepgram" && j.status === "completed" && j.transcript?.trim(),
+        j.provider !== REFERENCE_PROVIDER && j.status === "completed" && j.transcript?.trim(),
     );
 
     return others.map((job) => {
-      const groups = findDisagreementGroups(deepgram.transcript!, job.transcript!);
-      const wer = computeWordErrorRate(deepgram.transcript!, job.transcript!);
+      const groups = findDisagreementGroups(baseline.transcript!, job.transcript!);
+      const wer = computeWordErrorRate(baseline.transcript!, job.transcript!);
       const items = groups.slice(0, maxPerProvider).map((group) => {
         const formatted = formatDisagreementGroup(group);
         const refChoice = referenceText.trim()
@@ -99,8 +104,8 @@ export function ProviderDisagreements({
           Provider disagreements
         </CardTitle>
         <CardDescription>
-          Words where Deepgram and another provider differ (same normalization as WER). Listen
-          here first when editing your reference.
+          Words where {baselineLabel} and another provider differ (same normalization as WER).
+          Listen here first when editing your reference.
         </CardDescription>
       </CardHeader>
       <div className="space-y-4 px-4 pb-4">
@@ -130,13 +135,13 @@ export function ProviderDisagreements({
                           className={`text-xs ${
                             item.refChoice === "unclear"
                               ? "text-amber-300"
-                              : item.refChoice === "deepgram"
+                              : item.refChoice === "baseline"
                                 ? "text-sky-300"
                                 : "text-violet-300"
                           }`}
                         >
-                          {item.refChoice === "deepgram"
-                            ? "Your ref matches Deepgram"
+                          {item.refChoice === "baseline"
+                            ? `Your ref matches ${baselineLabel}`
                             : item.refChoice === "other"
                               ? `Your ref matches ${comparison.label.split("/")[0]?.trim()}`
                               : "Check audio — ref unclear here"}
@@ -147,7 +152,8 @@ export function ProviderDisagreements({
                       <p className="mb-1 text-xs text-zinc-500">…{item.formatted.context}…</p>
                     )}
                     <p className="text-sky-200">
-                      <span className="text-zinc-500">Deepgram:</span> {item.formatted.deepgram}
+                      <span className="text-zinc-500">{baselineLabel}:</span>{" "}
+                      {item.formatted.deepgram}
                     </p>
                     <p className="text-violet-200">
                       <span className="text-zinc-500">{comparison.label}:</span>{" "}

@@ -6,7 +6,7 @@ A Next.js audio transcription app with a modern UI. Upload single or multiple au
 
 - **Next.js 16** (App Router)
 - **Sequelize** + **PostgreSQL**
-- **Providers**: Soniox, Deepgram
+- **Providers**: Soniox, Deepgram, ElevenLabs, Google STT
 
 ## Quick start (local dev)
 
@@ -28,6 +28,9 @@ Edit `.env` and add API keys for the providers you plan to use:
 DATABASE_URL=postgresql://transcriber:transcriber@localhost:5432/transcriber
 SONIOX_API_KEY=your_key
 DEEPGRAM_API_KEY=your_key
+ELEVENLABS_API_KEY=your_key
+GOOGLE_CLOUD_PROJECT=your_gcp_project
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
 ### 2. Sync database & seed keyterms

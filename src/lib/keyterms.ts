@@ -18,6 +18,10 @@ export function getMaxKeyterms(provider?: string): number {
       return data.soniox_max_keyterms;
     case "deepgram":
       return data.nova_max_keyterms;
+    case "elevenlabs":
+      return data.max_keyterms;
+    case "google":
+      return data.max_keyterms;
     default:
       return data.max_keyterms;
   }

@@ -17,12 +17,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { Label, Textarea } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ListSearch } from "@/components/ui/list-search";
 import { ListPagination } from "@/components/ui/list-pagination";
 import { formatDate } from "@/lib/utils";
 import { matchesListSearch } from "@/lib/list-search";
 import { DEFAULT_PAGE_SIZE, type PaginationMeta } from "@/lib/pagination";
+import { REFERENCE_PROVIDER } from "@/lib/reference-provider";
+import { PROVIDERS } from "@/lib/providers";
 import { computeWordErrorRate } from "@/lib/wer";
+
+type ProviderInfo = {
+  id: string;
+  name: string;
+  configured: boolean;
+  defaultModel: string;
+  models: Array<{ id: string; label: string }>;
+};
 
 type WerMetrics = {
   substitutions: number;
@@ -52,6 +63,8 @@ type CallItem = {
   referenceTranscript: string;
   referenceSourceProvider: string | null;
   audioJobId: string | null;
+  initialSlots: Array<{ provider: string; model: string }>;
+  runSlots: Array<{ provider: string; model: string }>;
   jobs: JobMetric[];
   createdAt: string | null;
 };
@@ -79,7 +92,7 @@ type Dashboard = {
 };
 
 function callKey(call: CallItem) {
-  return call.benchmarkRunId ?? call.transcriptionJobId ?? "";
+  return call.benchmarkRunId ?? "";
 }
 
 export function ReviewPanel() {
@@ -94,6 +107,11 @@ export function ReviewPanel() {
   const [callSearch, setCallSearch] = useState("");
   const [callPagination, setCallPagination] = useState<PaginationMeta | null>(null);
   const [loadingMoreCalls, setLoadingMoreCalls] = useState(false);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [refreshingReference, setRefreshingReference] = useState(false);
+  const [addingProvider, setAddingProvider] = useState(false);
+  const [addProviderId, setAddProviderId] = useState("");
+  const [addModelId, setAddModelId] = useState("");
   const callsLengthRef = useRef(0);
 
   callsLengthRef.current = calls.length;
@@ -123,6 +141,13 @@ export function ReviewPanel() {
   }, []);
 
   useEffect(() => {
+    void fetch("/api/providers")
+      .then((res) => res.json())
+      .then((data) => setProviders(data.providers ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     void load()
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
@@ -133,7 +158,7 @@ export function ReviewPanel() {
       calls.filter((call) =>
         matchesListSearch(callSearch, [
           call.originalFilename,
-          call.benchmarkRunId ? "benchmark" : "transcribe",
+          "benchmark",
           call.reviewStatus ?? "not reviewed",
           ...call.jobs.flatMap((job) => [job.provider, job.model]),
         ]),
@@ -181,6 +206,123 @@ export function ReviewPanel() {
         : null,
     }));
   }, [activeCall, referenceText]);
+
+  const configuredProviders = useMemo(
+    () => providers.filter((provider) => provider.configured),
+    [providers],
+  );
+
+  const addableProviders = useMemo(() => {
+    if (!activeCall) return [];
+    const initialProviders = new Set(activeCall.initialSlots.map((slot) => slot.provider));
+    const alreadyRun = new Set(
+      activeCall.runSlots.map((slot) => `${slot.provider}::${slot.model}`),
+    );
+
+    return configuredProviders.flatMap((provider) => {
+      if (initialProviders.has(provider.id)) return [];
+
+      return provider.models
+        .filter((model) => !alreadyRun.has(`${provider.id}::${model.id}`))
+        .map((model) => ({
+          providerId: provider.id,
+          providerName: provider.name,
+          modelId: model.id,
+          modelLabel: model.label,
+        }));
+    });
+  }, [activeCall, configuredProviders]);
+
+  useEffect(() => {
+    if (!addableProviders.length) {
+      setAddProviderId("");
+      setAddModelId("");
+      return;
+    }
+    const currentValid = addableProviders.some(
+      (item) => item.providerId === addProviderId && item.modelId === addModelId,
+    );
+    if (!currentValid) {
+      setAddProviderId(addableProviders[0]!.providerId);
+      setAddModelId(addableProviders[0]!.modelId);
+    }
+  }, [addableProviders, addProviderId, addModelId]);
+
+  const hasPendingJobs = activeCall?.jobs.some(
+    (job) => job.status === "pending" || job.status === "processing",
+  );
+
+  const refreshReference = async () => {
+    if (!activeCall) return;
+    setRefreshingReference(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/reviews/reference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          benchmarkRunId: activeCall.benchmarkRunId,
+          transcriptionJobId: activeCall.transcriptionJobId,
+          wait: true,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to refresh reference");
+
+      if (json.referenceTranscript) {
+        setReferenceText(json.referenceTranscript);
+        setSaved(false);
+      }
+      await load();
+      if (activeCall) {
+        setActiveKey(callKey(activeCall));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to refresh reference");
+    } finally {
+      setRefreshingReference(false);
+    }
+  };
+
+  const addProviderTranscript = async () => {
+    if (!activeCall || !addProviderId || !addModelId) return;
+    setAddingProvider(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/reviews/add-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          benchmarkRunId: activeCall.benchmarkRunId,
+          transcriptionJobId: activeCall.transcriptionJobId,
+          provider: addProviderId,
+          model: addModelId,
+          wait: true,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to add provider");
+
+      await load();
+      if (activeCall) {
+        setActiveKey(callKey(activeCall));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add provider");
+    } finally {
+      setAddingProvider(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!hasPendingJobs) return;
+    const interval = setInterval(() => {
+      void load();
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [hasPendingJobs, load]);
 
   const saveReview = async (status: "draft" | "finalized") => {
     if (!activeCall || !referenceText.trim()) {
@@ -290,7 +432,7 @@ export function ReviewPanel() {
                       <th className="pb-2 pr-4">
                         <span className="inline-flex items-center gap-1">
                           Calls
-                          <InfoTooltip content="Reviews where this provider has a scored WER. Shows scored / total finalized when the provider was not run on every review (e.g. Transcribe-only Deepgram jobs)." />
+                          <InfoTooltip content="Reviews where this provider has a scored WER. Shows scored / total finalized when the provider was not run on every benchmark review." />
                         </span>
                       </th>
                       <th className="pb-2 pr-4">
@@ -387,7 +529,7 @@ export function ReviewPanel() {
                     {call.originalFilename}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    {call.benchmarkRunId ? "Benchmark" : "Transcribe"} · {call.jobs.length} slot
+                    Benchmark · {call.jobs.length} slot
                     {call.jobs.length !== 1 ? "s" : ""}
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1">
@@ -458,6 +600,85 @@ export function ReviewPanel() {
                   <AudioPlayer jobId={activeCall.audioJobId} filename={activeCall.originalFilename} />
                 )}
 
+                <div className="mt-4 flex flex-wrap items-end gap-2 rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={
+                      refreshingReference ||
+                      addingProvider ||
+                      !configuredProviders.some((p) => p.id === REFERENCE_PROVIDER)
+                    }
+                    onClick={() => void refreshReference()}
+                  >
+                    {refreshingReference ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    Fresh {PROVIDERS[REFERENCE_PROVIDER].name} reference
+                  </Button>
+
+                  {addableProviders.length > 0 ? (
+                    <>
+                      <Select value={addProviderId} onValueChange={setAddProviderId}>
+                        <SelectTrigger className="w-[160px]">
+                          <SelectValue placeholder="Provider" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[...new Set(addableProviders.map((item) => item.providerId))].map(
+                            (providerId) => {
+                              const provider = configuredProviders.find((p) => p.id === providerId);
+                              return (
+                                <SelectItem key={providerId} value={providerId}>
+                                  {provider?.name ?? providerId}
+                                </SelectItem>
+                              );
+                            },
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <Select value={addModelId} onValueChange={setAddModelId}>
+                        <SelectTrigger className="w-[160px]">
+                          <SelectValue placeholder="Model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {addableProviders
+                            .filter((item) => item.providerId === addProviderId)
+                            .map((item) => (
+                              <SelectItem key={item.modelId} value={item.modelId}>
+                                {item.modelLabel}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={addingProvider || refreshingReference || !addProviderId || !addModelId}
+                        onClick={() => void addProviderTranscript()}
+                      >
+                        {addingProvider ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
+                        Add provider transcript
+                      </Button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-zinc-500">
+                      No additional providers available — original providers are excluded.
+                    </span>
+                  )}
+                </div>
+
+                {hasPendingJobs && (
+                  <p className="mt-2 text-xs text-amber-300">
+                    Transcription in progress — results will update automatically.
+                  </p>
+                )}
+
                 <div className="mt-4">
                   <ProviderDisagreements jobs={activeCall.jobs} referenceText={referenceText} />
                 </div>
@@ -465,9 +686,9 @@ export function ReviewPanel() {
                 <div className="mt-4 space-y-2">
                   <Label>
                     Reviewer reference transcript
-                    {activeCall.referenceSourceProvider === "deepgram" && (
+                    {activeCall.referenceSourceProvider === REFERENCE_PROVIDER && (
                       <span className="ml-2 text-xs font-normal text-zinc-500">
-                        (auto-filled from Deepgram — edit as needed)
+                        (auto-filled from {PROVIDERS[REFERENCE_PROVIDER].name} — edit as needed)
                       </span>
                     )}
                   </Label>

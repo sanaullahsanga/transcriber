@@ -1,4 +1,6 @@
 import { computeWordErrorRate, type WerBreakdown } from "./wer";
+import { isComparisonJob, isReferenceJob } from "./call-jobs";
+import { REFERENCE_PROVIDER } from "./reference-provider";
 import type { TranscriptionJob } from "./models/TranscriptionJob";
 
 export type JobWerMetric = {
@@ -10,6 +12,11 @@ export type JobWerMetric = {
   metrics: WerBreakdown | null;
 };
 
+export type CallSlotConfig = {
+  provider: string;
+  model: string;
+};
+
 export type CallReviewMetrics = {
   reviewId: string | null;
   benchmarkRunId: string | null;
@@ -19,12 +26,34 @@ export type CallReviewMetrics = {
   referenceTranscript: string;
   referenceSourceProvider: string | null;
   audioJobId: string | null;
+  initialSlots: CallSlotConfig[];
+  /** All provider/model jobs on this call, including reference-only runs. */
+  runSlots: CallSlotConfig[];
   jobs: JobWerMetric[];
   createdAt: string | null;
 };
 
 type ReviewStatus = "draft" | "finalized";
 
+export function findReferenceJob(jobs: TranscriptionJob[]): TranscriptionJob | undefined {
+  const dedicated = jobs.find(
+    (j) =>
+      j.provider === REFERENCE_PROVIDER &&
+      isReferenceJob(j) &&
+      j.status === "completed" &&
+      j.transcript?.trim(),
+  );
+  if (dedicated) return dedicated;
+
+  return jobs.find(
+    (j) =>
+      j.provider === REFERENCE_PROVIDER &&
+      j.status === "completed" &&
+      j.transcript?.trim(),
+  );
+}
+
+/** @deprecated Use findReferenceJob — kept for legacy scripts comparing Deepgram. */
 export function findDeepgramJob(jobs: TranscriptionJob[]): TranscriptionJob | undefined {
   return jobs.find(
     (j) => j.provider === "deepgram" && j.status === "completed" && j.transcript?.trim(),
@@ -37,6 +66,7 @@ export function buildJobMetrics(
 ): JobWerMetric[] {
   const reference = referenceTranscript.trim();
   return [...jobs]
+    .filter(isComparisonJob)
     .sort((a, b) => (a.slotIndex ?? 0) - (b.slotIndex ?? 0))
     .map((job) => ({
       jobId: job.id,

@@ -58,6 +58,7 @@ type BenchmarkJob = {
   durationMs: number | null;
   processingMs: number | null;
   completedAt: string | null;
+  isReference?: boolean;
 };
 
 type BenchmarkRun = {
@@ -416,7 +417,10 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                 <BarChart3 className="h-5 w-5 text-violet-400" />
                 Compare providers
               </CardTitle>
-              <CardDescription>Up to 3 provider/model slots per file.</CardDescription>
+              <CardDescription>
+                Up to 3 provider/model slots per file. ElevenLabs also runs automatically for
+                reviewer reference when configured.
+              </CardDescription>
             </CardHeader>
 
             <div className="space-y-4">
@@ -607,6 +611,11 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-white">
                                 {job.provider}
+                                {job.isReference && (
+                                  <span className="ml-1 text-xs font-normal text-amber-300">
+                                    (reference)
+                                  </span>
+                                )}
                               </p>
                               <p className="truncate text-xs text-zinc-500">{job.model}</p>
                             </div>

@@ -7,7 +7,8 @@ import type { BenchmarkSlotConfig } from "@/lib/models/BenchmarkRun";
 import type { JobOptions } from "@/lib/models/TranscriptionJob";
 import { getUploadDir } from "@/lib/paths";
 import { buildPaginationMeta, parsePaginationParams } from "@/lib/pagination";
-import { getProvider, resolveModel } from "@/lib/providers";
+import { getProvider, isProviderConfigured, resolveModel } from "@/lib/providers";
+import { createReferenceJobForBenchmark } from "@/lib/call-jobs";
 import { enqueueJobs, ensureQueueRunning } from "@/lib/queue";
 
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ function serializeRun(run: BenchmarkRun, jobs: TranscriptionJob[]) {
         durationMs: job.durationMs,
         processingMs: job.processingMs,
         completedAt: job.completedAt,
+        isReference: Boolean(job.options?.isReference),
       })),
   };
 }
@@ -111,7 +113,7 @@ export async function POST(request: NextRequest) {
       if (!provider) {
         return NextResponse.json({ error: `Unknown provider: ${slot.provider}` }, { status: 400 });
       }
-      if (!process.env[provider.envKey]) {
+      if (!isProviderConfigured(provider)) {
         return NextResponse.json(
           { error: `${provider.name} API key is not configured` },
           { status: 400 },
@@ -176,6 +178,11 @@ export async function POST(request: NextRequest) {
           slotIndex: i,
         });
         jobs.push(job);
+      }
+
+      const referenceJob = await createReferenceJobForBenchmark(run);
+      if (referenceJob) {
+        jobs.push(referenceJob);
       }
 
       enqueueJobs(jobs.map((j) => j.id));

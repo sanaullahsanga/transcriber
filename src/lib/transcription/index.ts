@@ -1,11 +1,15 @@
 import type { ProviderId } from "../providers";
 import { DeepgramTranscriptionProvider } from "./deepgram";
+import { ElevenLabsTranscriptionProvider } from "./elevenlabs";
+import { GoogleTranscriptionProvider } from "./google";
 import { SonioxTranscriptionProvider } from "./soniox";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 
 const providers: Record<ProviderId, TranscriptionProvider> = {
   soniox: new SonioxTranscriptionProvider(),
   deepgram: new DeepgramTranscriptionProvider(),
+  elevenlabs: new ElevenLabsTranscriptionProvider(),
+  google: new GoogleTranscriptionProvider(),
 };
 
 export async function transcribeAudio(input: TranscriptionInput): Promise<TranscriptionResult> {

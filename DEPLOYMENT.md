@@ -104,6 +104,9 @@ Production `.env` example:
 DATABASE_URL=postgresql://transcriber:STRONG_DB_PASSWORD@127.0.0.1:5432/transcriber
 SONIOX_API_KEY=your_soniox_key
 DEEPGRAM_API_KEY=your_deepgram_key
+ELEVENLABS_API_KEY=your_elevenlabs_key
+GOOGLE_CLOUD_PROJECT=your_gcp_project
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/google-service-account.json
 PROJECT_ROOT=/var/www/transcriber
 UPLOAD_DIR=/var/www/transcriber/uploads
 NODE_ENV=production

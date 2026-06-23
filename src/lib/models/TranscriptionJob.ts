@@ -14,6 +14,8 @@ export type JobOptions = {
   speakerDiarization: boolean;
   keyterms: string[];
   language: string;
+  /** Dedicated ElevenLabs job used only for reviewer reference prefill. */
+  isReference?: boolean;
 };
 
 export class TranscriptionJob extends Model<
