@@ -123,6 +123,8 @@ function buildRecognitionConfig(
     languageCodes: [toLanguageCode(input.language)],
     features: {
       enableAutomaticPunctuation: true,
+      enableWordTimeOffsets: true,
+      enableWordConfidence: true,
       ...(useDiarization
         ? {
             diarizationConfig: {
