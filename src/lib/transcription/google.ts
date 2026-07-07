@@ -187,11 +187,16 @@ async function batchRecognizeFromGcs(
   config: GoogleRecognizeConfig & { location: string },
   gcsUri: string,
 ): Promise<string> {
-  const attempts: Array<{ speakerDiarization: boolean; includeAdaptation: boolean }> = [
-    { speakerDiarization: config.speakerDiarization, includeAdaptation: true },
-    { speakerDiarization: false, includeAdaptation: true },
-    { speakerDiarization: false, includeAdaptation: false },
-  ];
+  const attempts: Array<{ speakerDiarization: boolean; includeAdaptation: boolean }> = [];
+  if (config.speakerDiarization) {
+    attempts.push({ speakerDiarization: true, includeAdaptation: true });
+    attempts.push({ speakerDiarization: true, includeAdaptation: false });
+    attempts.push({ speakerDiarization: false, includeAdaptation: true });
+    attempts.push({ speakerDiarization: false, includeAdaptation: false });
+  } else {
+    attempts.push({ speakerDiarization: false, includeAdaptation: true });
+    attempts.push({ speakerDiarization: false, includeAdaptation: false });
+  }
 
   let lastError: unknown;
   for (const attempt of attempts) {
