@@ -122,8 +122,9 @@ export function BenchmarkPanel({ providers, settings }: BenchmarkPanelProps) {
   const loadRuns = useCallback(async (append = false) => {
     if (append) setLoadingMoreRuns(true);
     try {
+      const limit = append ? DEFAULT_PAGE_SIZE : Math.max(DEFAULT_PAGE_SIZE, runsLengthRef.current);
       const offset = append ? runsLengthRef.current : 0;
-      const res = await fetch(`/api/benchmark?limit=${DEFAULT_PAGE_SIZE}&offset=${offset}`);
+      const res = await fetch(`/api/benchmark?limit=${limit}&offset=${offset}`);
       const data = await res.json();
       setRuns((prev) => (append ? [...prev, ...(data.runs ?? [])] : (data.runs ?? [])));
       setRunPagination(data.pagination ?? null);

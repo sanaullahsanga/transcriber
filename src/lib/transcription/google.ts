@@ -29,16 +29,22 @@ function resolveGoogleModel(model: string): GoogleSttModel {
 function isRetryableConfigError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
-    /invalid_argument/i.test(message) &&
-    /unsupported|not support|diarization/i.test(message) &&
-    !/does not exist in the location/i.test(message)
+    (/invalid_argument/i.test(message) &&
+      /unsupported|not support|diarization/i.test(message) &&
+      !/does not exist in the location/i.test(message)) ||
+    /internal error/i.test(message) ||
+    /error \(13\)/i.test(message)
   );
 }
 
 function isRetryableBatchError(error: unknown): boolean {
   if (isRetryableConfigError(error)) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /empty transcript/i.test(message);
+  return (
+    /empty transcript/i.test(message) ||
+    /internal error/i.test(message) ||
+    /error \(13\)/i.test(message)
+  );
 }
 
 function gcsObjectSuffix(uri: string): string {
