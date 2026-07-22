@@ -12,11 +12,14 @@ export type KeytermsFile = {
 
 const data = keytermsData as KeytermsFile;
 
-export function getMaxKeyterms(provider?: string): number {
+export function getMaxKeyterms(provider?: string, model?: string): number {
   switch (provider) {
     case "soniox":
       return data.soniox_max_keyterms;
     case "deepgram":
+      if (model?.toLowerCase().includes("flux")) {
+        return data.flux_max_keyterms;
+      }
       return data.nova_max_keyterms;
     case "elevenlabs":
       return data.max_keyterms;

@@ -1,5 +1,11 @@
 export type ProviderId = "soniox" | "deepgram" | "elevenlabs" | "google";
 
+export const DEEPGRAM_FLUX_MODEL = "flux-general-en";
+
+export function isDeepgramFluxModel(model: string): boolean {
+  return model === DEEPGRAM_FLUX_MODEL || model.toLowerCase().includes("flux");
+}
+
 export type ProviderModel = {
   id: string;
   label: string;
@@ -30,12 +36,13 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   deepgram: {
     id: "deepgram",
     name: "Deepgram",
-    description: "Nova models with smart formatting and diarization",
+    description: "Nova batch models and Flux conversational STT",
     envKey: "DEEPGRAM_API_KEY",
     defaultModel: "nova-3",
     models: [
       { id: "nova-3", label: "Nova 3", description: "Best accuracy" },
       { id: "nova-2", label: "Nova 2", description: "Fast and reliable" },
+      { id: DEEPGRAM_FLUX_MODEL, label: "Flux (English)", description: "Conversational STT for voice agents" },
       { id: "enhanced", label: "Enhanced", description: "General purpose" },
       { id: "whisper-large", label: "Whisper Large", description: "Whisper on Deepgram" },
     ],
