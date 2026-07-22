@@ -7,6 +7,7 @@ import type { JobOptions } from "./models/TranscriptionJob";
 import { getUploadDir, resolveStoredPath } from "./paths";
 import { getProvider, resolveModel, PROVIDERS } from "./providers";
 import { isProviderConfigured } from "./providers-config";
+import { deepgramJobTimeoutMs } from "./transcription/deepgram";
 import { REFERENCE_PROVIDER } from "./reference-provider";
 import { DEFAULT_GOOGLE_STT_MODEL } from "./transcription/google";
 import { enqueueJob, ensureQueueRunning } from "./queue";
@@ -293,21 +294,30 @@ export async function addProviderJobToCall(input: {
 
 export async function waitForJobCompletion(
   jobId: string,
-  timeoutMs = 600_000,
+  timeoutMs?: number,
   pollMs = 1500,
 ): Promise<TranscriptionJob> {
+  await initDb();
   const started = Date.now();
+  const job = await TranscriptionJob.findByPk(jobId);
+  if (!job) {
+    throw new Error("Job not found");
+  }
 
-  while (Date.now() - started < timeoutMs) {
-    const job = await TranscriptionJob.findByPk(jobId);
-    if (!job) {
+  const effectiveTimeout =
+    timeoutMs ??
+    (job.provider === "deepgram" ? deepgramJobTimeoutMs(job.model) : 900_000);
+
+  while (Date.now() - started < effectiveTimeout) {
+    const current = await TranscriptionJob.findByPk(jobId);
+    if (!current) {
       throw new Error("Job not found");
     }
-    if (job.status === "completed") {
-      return job;
+    if (current.status === "completed") {
+      return current;
     }
-    if (job.status === "failed") {
-      throw new Error(job.errorMessage ?? "Transcription failed");
+    if (current.status === "failed") {
+      throw new Error(current.errorMessage ?? "Transcription failed");
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }

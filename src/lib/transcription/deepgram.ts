@@ -1,22 +1,24 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
-import WebSocket from "ws";
+import { DeepgramClient } from "@deepgram/sdk";
 import { prepareAudioForStt, readLinear16Mono } from "../audio/normalize";
 import { getMaxKeyterms } from "../keyterms";
 import { DEEPGRAM_FLUX_MODEL, isDeepgramFluxModel } from "../providers";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
 
-const DEEPGRAM_V1_LISTEN_URL = "https://api.deepgram.com/v1/listen";
-const DEEPGRAM_V2_LISTEN_URL = "wss://api.deepgram.com/v2/listen";
+const FLUX_SAMPLE_RATE = 16_000;
+const FLUX_BYTES_PER_SAMPLE = 2;
+const FLUX_BYTES_PER_SECOND = FLUX_SAMPLE_RATE * FLUX_BYTES_PER_SAMPLE;
 const FLUX_CHUNK_SIZE = 2560;
-const FLUX_CHUNK_DELAY_MS = 10;
-const FLUX_FINALIZE_DEBOUNCE_MS = 3_000;
+const FLUX_UPLOAD_CHUNK_DELAY_MS = 10;
+const FLUX_COVERAGE_TOLERANCE_SEC = 2;
+const FLUX_COVERAGE_POLL_MS = 500;
+const FLUX_FINALIZE_DEBOUNCE_MS = 5_000;
 const FLUX_MIN_TIMEOUT_MS = 120_000;
 const FLUX_KEEPALIVE_INTERVAL_MS = 15_000;
-/** ~20ms of silent linear16 PCM — any binary frame resets Flux idle timers. */
+/** ~20ms of silent linear16 PCM — resets Flux idle timers during wait gaps. */
 const FLUX_KEEPALIVE_PCM = Buffer.alloc(640);
 
-type FluxMessage = {
+type FluxTurnInfo = {
   type?: string;
   event?: string;
   transcript?: string;
@@ -26,6 +28,18 @@ type FluxMessage = {
   description?: string;
   message?: string;
 };
+
+type NovaTranscriptResponse = {
+  metadata?: { duration?: number };
+  results?: {
+    utterances?: Array<{ transcript?: string; speaker?: number | string }>;
+    channels?: Array<{ alternatives?: Array<{ transcript?: string }> }>;
+  };
+};
+
+function isNovaTranscriptResponse(value: unknown): value is NovaTranscriptResponse {
+  return typeof value === "object" && value !== null && "results" in value;
+}
 
 function speakerLabels(speakers: (number | string)[]): Record<string | number, string> {
   const labels: Record<string | number, string> = {};
@@ -37,9 +51,8 @@ function speakerLabels(speakers: (number | string)[]): Record<string | number, s
   return labels;
 }
 
-function formatDialogue(payload: Record<string, unknown>): string {
-  const results = payload.results as Record<string, unknown> | undefined;
-  const utterances = (results?.utterances as Array<Record<string, unknown>>) ?? [];
+function formatDialogue(payload: NovaTranscriptResponse): string {
+  const utterances = payload.results?.utterances ?? [];
   const speakers = [
     ...new Set(
       utterances
@@ -60,24 +73,8 @@ function formatDialogue(payload: Record<string, unknown>): string {
   return lines.join("\n\n");
 }
 
-function plainText(payload: Record<string, unknown>): string {
-  const results = payload.results as Record<string, unknown> | undefined;
-  const channels = (results?.channels as Array<Record<string, unknown>>) ?? [];
-  const alternatives = (channels[0]?.alternatives as Array<Record<string, unknown>>) ?? [];
-  return String(alternatives[0]?.transcript ?? "").trim();
-}
-
-function contentType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const map: Record<string, string> = {
-    ".wav": "audio/wav",
-    ".mp3": "audio/mpeg",
-    ".m4a": "audio/mp4",
-    ".flac": "audio/flac",
-    ".ogg": "audio/ogg",
-    ".webm": "audio/webm",
-  };
-  return map[ext] ?? "application/octet-stream";
+function plainText(payload: NovaTranscriptResponse): string {
+  return String(payload.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "").trim();
 }
 
 function resolveFluxModel(model: string): string {
@@ -87,24 +84,34 @@ function resolveFluxModel(model: string): string {
   return model;
 }
 
-function appendKeyterms(params: URLSearchParams, keyterms: string[], model: string) {
-  const max = getMaxKeyterms("deepgram", model);
-  for (const term of keyterms.slice(0, max)) {
-    if (term) params.append("keyterm", term);
-  }
+function normalizeApiKey(apiKey: string): string {
+  return apiKey.replace(/^"|"$/g, "");
 }
 
-function fluxErrorMessage(message: FluxMessage): string {
-  return [message.code, message.description, message.message].filter(Boolean).join(": ") || "Deepgram Flux error";
+function getDeepgramClient(apiKey: string): DeepgramClient {
+  return new DeepgramClient({ apiKey: normalizeApiKey(apiKey) });
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fluxTimeoutMs(audioBytes: number): number {
-  const audioSeconds = audioBytes / (16_000 * 2);
-  return Math.max(FLUX_MIN_TIMEOUT_MS, Math.ceil(audioSeconds) * 5_000 + 60_000);
+export function fluxTimeoutMs(audioBytes: number): number {
+  const audioSeconds = audioBytes / FLUX_BYTES_PER_SECOND;
+  // Upload is fast, but Flux must decode the full timeline before CloseStream.
+  return Math.max(FLUX_MIN_TIMEOUT_MS, Math.ceil(audioSeconds) * 3_000 + 120_000);
+}
+
+function fluxExpectedDurationSec(audioBytes: number): number {
+  return audioBytes / FLUX_BYTES_PER_SECOND;
+}
+
+/** Default wait timeout for long benchmark jobs (supports 8+ minute calls on Flux). */
+export function deepgramJobTimeoutMs(model?: string): number {
+  if (model && isDeepgramFluxModel(model)) {
+    return 1_800_000;
+  }
+  return 900_000;
 }
 
 function buildFluxTranscript(
@@ -120,7 +127,7 @@ function buildFluxTranscript(
 }
 
 function recordFluxTurn(
-  message: FluxMessage,
+  message: FluxTurnInfo,
   committedTurns: Map<number, string>,
   provisionalTurns: Map<number, string>,
 ) {
@@ -140,6 +147,25 @@ function recordFluxTurn(
   }
 }
 
+function fluxErrorMessage(message: { code?: string; description?: string; message?: string }): string {
+  return [message.code, message.description, message.message].filter(Boolean).join(": ") || "Deepgram Flux error";
+}
+
+async function waitForFluxCoverage(input: {
+  sendKeepalive: () => void;
+  getMaxAudioWindowEnd: () => number;
+  expectedDurationSec: number;
+  deadlineMs: number;
+}) {
+  while (
+    input.getMaxAudioWindowEnd() < input.expectedDurationSec - FLUX_COVERAGE_TOLERANCE_SEC &&
+    Date.now() < input.deadlineMs
+  ) {
+    input.sendKeepalive();
+    await sleep(FLUX_COVERAGE_POLL_MS);
+  }
+}
+
 async function transcribeFlux(
   input: TranscriptionInput,
   apiKey: string,
@@ -152,123 +178,80 @@ async function transcribeFlux(
   );
 
   try {
-    const params = new URLSearchParams({
-      model,
-      encoding: "linear16",
-      sample_rate: "16000",
-    });
-    appendKeyterms(params, input.options.keyterms, model);
-
     const pcm = await readLinear16Mono(prepared.filePath);
-    return await transcribeFluxWebSocket(`${DEEPGRAM_V2_LISTEN_URL}?${params}`, apiKey, pcm);
-  } finally {
-    await prepared.cleanup?.();
-  }
-}
+    const client = getDeepgramClient(apiKey);
+    const token = normalizeApiKey(apiKey);
+    const maxKeyterms = getMaxKeyterms("deepgram", model);
 
-function startFluxKeepalive(ws: WebSocket, shouldSendPcm: () => boolean): () => void {
-  const timer = setInterval(() => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    ws.ping();
-    if (shouldSendPcm()) {
-      ws.send(FLUX_KEEPALIVE_PCM);
-    }
-  }, FLUX_KEEPALIVE_INTERVAL_MS);
-
-  return () => clearInterval(timer);
-}
-
-async function transcribeFluxWebSocket(
-  url: string,
-  apiKey: string,
-  audio: Buffer,
-): Promise<TranscriptionResult> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Token ${apiKey}`,
-      },
+    const connection = await client.listen.v2.connect({
+      model: model as "flux-general-en",
+      encoding: "linear16",
+      sample_rate: 16000,
+      keyterm: input.options.keyterms.slice(0, maxKeyterms),
+      Authorization: `Token ${token}`,
     });
 
     const committedTurns = new Map<number, string>();
     const provisionalTurns = new Map<number, string>();
     let durationMs: number | null = null;
-    let settled = false;
+    let maxAudioWindowEnd = 0;
     let closeStreamSent = false;
+    let settled = false;
     let finalizeTimer: ReturnType<typeof setTimeout> | null = null;
-    let stopKeepalive: (() => void) | null = null;
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (finalizeTimer) clearTimeout(finalizeTimer);
-      stopKeepalive?.();
-      fn();
-    };
+    const expectedDurationSec = fluxExpectedDurationSec(pcm.length);
+    const deadlineMs = Date.now() + fluxTimeoutMs(pcm.length);
 
-    const finalize = () => {
-      const text = buildFluxTranscript(committedTurns, provisionalTurns);
-      finish(() => {
-        if (text) {
-          resolve({ text, durationMs });
-          return;
-        }
-        reject(new Error("Deepgram Flux returned no transcript"));
-      });
-    };
-
-    const scheduleFinalize = () => {
-      if (finalizeTimer) clearTimeout(finalizeTimer);
-      finalizeTimer = setTimeout(finalize, FLUX_FINALIZE_DEBOUNCE_MS);
-    };
-
-    const timeout = setTimeout(() => {
-      ws.close();
-      const text = buildFluxTranscript(committedTurns, provisionalTurns);
-      finish(() => {
-        if (text) {
-          resolve({ text, durationMs });
-          return;
-        }
-        reject(new Error("Deepgram Flux timed out waiting for transcript"));
-      });
-    }, fluxTimeoutMs(audio.length));
-
-    ws.on("open", () => {
-      stopKeepalive = startFluxKeepalive(ws, () => !closeStreamSent);
-
-      void (async () => {
+    return await new Promise<TranscriptionResult>((resolve, reject) => {
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (finalizeTimer) clearTimeout(finalizeTimer);
+        if (keepaliveTimer) clearInterval(keepaliveTimer);
         try {
-          for (let i = 0; i < audio.length; i += FLUX_CHUNK_SIZE) {
-            ws.send(audio.subarray(i, i + FLUX_CHUNK_SIZE));
-            if (FLUX_CHUNK_DELAY_MS > 0) {
-              await sleep(FLUX_CHUNK_DELAY_MS);
-            }
-          }
-          closeStreamSent = true;
-          ws.send(JSON.stringify({ type: "CloseStream" }));
-          scheduleFinalize();
-        } catch (error) {
-          ws.close();
-          finish(() => {
-            reject(error instanceof Error ? error : new Error("Deepgram Flux stream failed"));
-          });
+          connection.close();
+        } catch {
+          // Ignore close errors after completion.
         }
-      })();
-    });
+        fn();
+      };
 
-    ws.on("ping", () => {
-      ws.pong();
-    });
+      const finalize = () => {
+        const text = buildFluxTranscript(committedTurns, provisionalTurns);
+        finish(() => {
+          if (!text) {
+            reject(new Error("Deepgram Flux returned no transcript"));
+            return;
+          }
+          resolve({ text, durationMs });
+        });
+      };
 
-    ws.on("message", (data) => {
-      if (typeof data !== "string" && !Buffer.isBuffer(data)) return;
+      const scheduleFinalize = () => {
+        if (finalizeTimer) clearTimeout(finalizeTimer);
+        finalizeTimer = setTimeout(finalize, FLUX_FINALIZE_DEBOUNCE_MS);
+      };
 
-      try {
-        const message = JSON.parse(String(data)) as FluxMessage;
+      const sendKeepalive = () => {
+        if (connection.readyState !== 1 || closeStreamSent) return;
+        connection.sendMedia(FLUX_KEEPALIVE_PCM);
+      };
+
+      const timeout = setTimeout(() => {
+        finish(() => {
+          const text = buildFluxTranscript(committedTurns, provisionalTurns);
+          if (text) {
+            resolve({ text, durationMs });
+            return;
+          }
+          reject(new Error("Deepgram Flux timed out waiting for transcript"));
+        });
+      }, fluxTimeoutMs(pcm.length));
+
+      connection.on("message", (message) => {
         if (message.type === "Error") {
-          ws.close();
           finish(() => {
             reject(new Error(fluxErrorMessage(message)));
           });
@@ -279,76 +262,105 @@ async function transcribeFluxWebSocket(
           return;
         }
 
-        recordFluxTurn(message, committedTurns, provisionalTurns);
+        recordFluxTurn(message as FluxTurnInfo, committedTurns, provisionalTurns);
 
         if (typeof message.audio_window_end === "number") {
+          maxAudioWindowEnd = Math.max(maxAudioWindowEnd, message.audio_window_end);
           durationMs = Math.round(message.audio_window_end * 1000);
         }
 
         if (closeStreamSent) {
           scheduleFinalize();
         }
-      } catch {
-        // Ignore malformed websocket payloads.
-      }
-    });
+      });
 
-    ws.on("close", () => {
-      if (closeStreamSent) {
-        scheduleFinalize();
-        return;
-      }
-      finalize();
-    });
+      connection.on("error", (error) => {
+        finish(() => {
+          reject(error instanceof Error ? error : new Error("Deepgram Flux WebSocket error"));
+        });
+      });
 
-    ws.on("error", (error) => {
-      finish(() => {
-        reject(error instanceof Error ? error : new Error("Deepgram Flux WebSocket error"));
+      connection.connect();
+
+      void connection.waitForOpen().then(async () => {
+        keepaliveTimer = setInterval(sendKeepalive, FLUX_KEEPALIVE_INTERVAL_MS);
+
+        try {
+          for (let i = 0; i < pcm.length; i += FLUX_CHUNK_SIZE) {
+            connection.sendMedia(pcm.subarray(i, i + FLUX_CHUNK_SIZE));
+            if (FLUX_UPLOAD_CHUNK_DELAY_MS > 0) {
+              await sleep(FLUX_UPLOAD_CHUNK_DELAY_MS);
+            }
+          }
+
+          await waitForFluxCoverage({
+            sendKeepalive,
+            getMaxAudioWindowEnd: () => maxAudioWindowEnd,
+            expectedDurationSec,
+            deadlineMs,
+          });
+
+          if (keepaliveTimer) {
+            clearInterval(keepaliveTimer);
+            keepaliveTimer = null;
+          }
+
+          closeStreamSent = true;
+          connection.sendCloseStream({ type: "CloseStream" });
+          scheduleFinalize();
+        } catch (error) {
+          finish(() => {
+            reject(error instanceof Error ? error : new Error("Deepgram Flux stream failed"));
+          });
+        }
+      }).catch((error) => {
+        finish(() => {
+          reject(error instanceof Error ? error : new Error("Deepgram Flux connection failed"));
+        });
       });
     });
-  });
+  } finally {
+    await prepared.cleanup?.();
+  }
 }
 
 async function transcribeNova(
   input: TranscriptionInput,
   apiKey: string,
 ): Promise<TranscriptionResult> {
-  const params = new URLSearchParams({
-    model: input.model,
-    language: input.options.language,
-    smart_format: "true",
-  });
+  const prepared = await prepareAudioForStt(
+    input.filePath,
+    input.filename,
+    input.options.normalize,
+  );
 
-  if (input.options.speakerDiarization) {
-    params.set("diarize", "true");
-    params.set("utterances", "true");
+  try {
+    const audio = await readFile(prepared.filePath);
+    const client = getDeepgramClient(apiKey);
+    const maxKeyterms = getMaxKeyterms("deepgram", input.model);
+
+    const response = await client.listen.v1.media.transcribeFile(audio, {
+      model: input.model,
+      language: input.options.language,
+      smart_format: true,
+      diarize: input.options.speakerDiarization || undefined,
+      utterances: input.options.speakerDiarization || undefined,
+      keyterm: input.options.keyterms.slice(0, maxKeyterms),
+    });
+
+    if (!isNovaTranscriptResponse(response)) {
+      throw new Error("Deepgram Nova returned an async callback response; expected immediate transcript");
+    }
+
+    const duration = response.metadata?.duration;
+
+    return {
+      text: input.options.speakerDiarization ? formatDialogue(response) : plainText(response),
+      durationMs: duration ? Math.round(duration * 1000) : null,
+    };
+  } finally {
+    await prepared.cleanup?.();
   }
-
-  appendKeyterms(params, input.options.keyterms, input.model);
-
-  const audio = await readFile(input.filePath);
-  const response = await fetch(`${DEEPGRAM_V1_LISTEN_URL}?${params}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Token ${apiKey}`,
-      "Content-Type": input.mimeType ?? contentType(input.filePath),
-    },
-    body: audio,
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Deepgram error (${response.status}): ${body}`);
-  }
-
-  const payload = (await response.json()) as Record<string, unknown>;
-  const metadata = payload.metadata as Record<string, unknown> | undefined;
-  const duration = metadata?.duration as number | undefined;
-
-  return {
-    text: input.options.speakerDiarization ? formatDialogue(payload) : plainText(payload),
-    durationMs: duration ? Math.round(duration * 1000) : null,
-  };
 }
 
 export class DeepgramTranscriptionProvider implements TranscriptionProvider {

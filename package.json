@@ -17,6 +17,7 @@
     "setup:production": "bash scripts/setup-production.sh"
   },
   "dependencies": {
+    "@deepgram/sdk": "^5.7.0",
     "@google-cloud/speech": "^7.4.0",
     "@radix-ui/react-dialog": "^1.1.17",
     "@radix-ui/react-label": "^2.1.10",
@@ -41,8 +42,7 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5",
-    "uuid": "^14.0.1",
-    "ws": "^8.21.1"
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -50,7 +50,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
-    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.9"
   }
