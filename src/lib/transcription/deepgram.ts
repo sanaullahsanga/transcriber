@@ -10,13 +10,14 @@ const DEEPGRAM_V1_LISTEN_URL = "https://api.deepgram.com/v1/listen";
 const DEEPGRAM_V2_LISTEN_URL = "wss://api.deepgram.com/v2/listen";
 const FLUX_CHUNK_SIZE = 2560;
 const FLUX_CHUNK_DELAY_MS = 10;
-const FLUX_CLOSE_GRACE_MS = 2_000;
-const FLUX_TIMEOUT_MS = 120_000;
+const FLUX_FINALIZE_DEBOUNCE_MS = 3_000;
+const FLUX_MIN_TIMEOUT_MS = 120_000;
 
 type FluxMessage = {
   type?: string;
   event?: string;
   transcript?: string;
+  turn_index?: number;
   audio_window_end?: number;
   code?: string;
   description?: string;
@@ -98,6 +99,44 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function fluxTimeoutMs(audioBytes: number): number {
+  const audioSeconds = audioBytes / (16_000 * 2);
+  return Math.max(FLUX_MIN_TIMEOUT_MS, Math.ceil(audioSeconds) * 5_000 + 60_000);
+}
+
+function buildFluxTranscript(
+  committedTurns: Map<number, string>,
+  provisionalTurns: Map<number, string>,
+): string {
+  const turnIndexes = new Set([...committedTurns.keys(), ...provisionalTurns.keys()]);
+  return [...turnIndexes]
+    .sort((a, b) => a - b)
+    .map((index) => committedTurns.get(index) ?? provisionalTurns.get(index))
+    .filter((text): text is string => Boolean(text?.trim()))
+    .join("\n\n");
+}
+
+function recordFluxTurn(
+  message: FluxMessage,
+  committedTurns: Map<number, string>,
+  provisionalTurns: Map<number, string>,
+) {
+  const transcript = String(message.transcript ?? "").trim();
+  if (!transcript) return;
+
+  const turnIndex = typeof message.turn_index === "number" ? message.turn_index : 0;
+
+  if (message.event === "EndOfTurn") {
+    committedTurns.set(turnIndex, transcript);
+    provisionalTurns.delete(turnIndex);
+    return;
+  }
+
+  if (message.event === "Update") {
+    provisionalTurns.set(turnIndex, transcript);
+  }
+}
+
 async function transcribeFlux(
   input: TranscriptionInput,
   apiKey: string,
@@ -136,37 +175,48 @@ async function transcribeFluxWebSocket(
       },
     });
 
-    const turns: string[] = [];
+    const committedTurns = new Map<number, string>();
+    const provisionalTurns = new Map<number, string>();
     let durationMs: number | null = null;
     let settled = false;
     let closeStreamSent = false;
-    let closeGraceTimer: ReturnType<typeof setTimeout> | null = null;
+    let finalizeTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (closeGraceTimer) clearTimeout(closeGraceTimer);
+      if (finalizeTimer) clearTimeout(finalizeTimer);
       fn();
     };
 
-    const resolveIfReady = () => {
-      if (!turns.length) return;
+    const finalize = () => {
+      const text = buildFluxTranscript(committedTurns, provisionalTurns);
       finish(() => {
-        resolve({ text: turns.join("\n\n"), durationMs });
+        if (text) {
+          resolve({ text, durationMs });
+          return;
+        }
+        reject(new Error("Deepgram Flux returned no transcript"));
       });
+    };
+
+    const scheduleFinalize = () => {
+      if (finalizeTimer) clearTimeout(finalizeTimer);
+      finalizeTimer = setTimeout(finalize, FLUX_FINALIZE_DEBOUNCE_MS);
     };
 
     const timeout = setTimeout(() => {
       ws.close();
+      const text = buildFluxTranscript(committedTurns, provisionalTurns);
       finish(() => {
-        if (turns.length) {
-          resolve({ text: turns.join("\n\n"), durationMs });
+        if (text) {
+          resolve({ text, durationMs });
           return;
         }
         reject(new Error("Deepgram Flux timed out waiting for transcript"));
       });
-    }, FLUX_TIMEOUT_MS);
+    }, fluxTimeoutMs(audio.length));
 
     ws.on("open", () => {
       void (async () => {
@@ -179,6 +229,7 @@ async function transcribeFluxWebSocket(
           }
           closeStreamSent = true;
           ws.send(JSON.stringify({ type: "CloseStream" }));
+          scheduleFinalize();
         } catch (error) {
           ws.close();
           finish(() => {
@@ -205,19 +256,14 @@ async function transcribeFluxWebSocket(
           return;
         }
 
-        const transcript = String(message.transcript ?? "").trim();
-        if (message.event === "EndOfTurn" && transcript) {
-          turns.push(transcript);
-        }
+        recordFluxTurn(message, committedTurns, provisionalTurns);
 
         if (typeof message.audio_window_end === "number") {
           durationMs = Math.round(message.audio_window_end * 1000);
         }
 
-        if (closeStreamSent && closeGraceTimer === null) {
-          closeGraceTimer = setTimeout(() => {
-            resolveIfReady();
-          }, FLUX_CLOSE_GRACE_MS);
+        if (closeStreamSent) {
+          scheduleFinalize();
         }
       } catch {
         // Ignore malformed websocket payloads.
@@ -225,13 +271,11 @@ async function transcribeFluxWebSocket(
     });
 
     ws.on("close", () => {
-      finish(() => {
-        if (turns.length) {
-          resolve({ text: turns.join("\n\n"), durationMs });
-          return;
-        }
-        reject(new Error("Deepgram Flux returned no transcript"));
-      });
+      if (closeStreamSent) {
+        scheduleFinalize();
+        return;
+      }
+      finalize();
     });
 
     ws.on("error", (error) => {
