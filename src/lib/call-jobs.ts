@@ -251,14 +251,6 @@ export async function addProviderJobToCall(input: {
 
   const model = resolveModel(input.provider, input.model);
   const source = await resolveAudioSource(input);
-  const initialSlots = await loadInitialSlots({
-    benchmarkRunId: source.benchmarkRunId ?? undefined,
-    jobs: source.jobs,
-  });
-
-  if (initialSlots.some((slot) => slot.provider === input.provider)) {
-    throw new Error(`${provider.name} was already used in the original run for this call`);
-  }
 
   const duplicate = source.jobs.find(
     (job) => job.provider === input.provider && job.model === model,

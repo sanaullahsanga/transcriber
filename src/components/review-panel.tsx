@@ -212,41 +212,49 @@ export function ReviewPanel() {
     [providers],
   );
 
-  const addableProviders = useMemo(() => {
-    if (!activeCall) return [];
-    const initialProviders = new Set(activeCall.initialSlots.map((slot) => slot.provider));
-    const alreadyRun = new Set(
-      activeCall.runSlots.map((slot) => `${slot.provider}::${slot.model}`),
-    );
+  const transcribedSlots = useMemo(() => {
+    if (!activeCall) return new Set<string>();
+    return new Set(activeCall.runSlots.map((slot) => `${slot.provider}::${slot.model}`));
+  }, [activeCall]);
 
-    return configuredProviders.flatMap((provider) => {
-      if (initialProviders.has(provider.id)) return [];
+  const modelsForProvider = useCallback(
+    (providerId: string) => {
+      const provider = configuredProviders.find((item) => item.id === providerId);
+      if (!provider) return [];
+      return provider.models.filter(
+        (model) => !transcribedSlots.has(`${providerId}::${model.id}`),
+      );
+    },
+    [configuredProviders, transcribedSlots],
+  );
 
-      return provider.models
-        .filter((model) => !alreadyRun.has(`${provider.id}::${model.id}`))
-        .map((model) => ({
-          providerId: provider.id,
-          providerName: provider.name,
-          modelId: model.id,
-          modelLabel: model.label,
-        }));
-    });
-  }, [activeCall, configuredProviders]);
+  const hasAddableSlot = useMemo(
+    () => configuredProviders.some((provider) => modelsForProvider(provider.id).length > 0),
+    [configuredProviders, modelsForProvider],
+  );
 
   useEffect(() => {
-    if (!addableProviders.length) {
+    if (!configuredProviders.length) {
       setAddProviderId("");
       setAddModelId("");
       return;
     }
-    const currentValid = addableProviders.some(
-      (item) => item.providerId === addProviderId && item.modelId === addModelId,
-    );
-    if (!currentValid) {
-      setAddProviderId(addableProviders[0]!.providerId);
-      setAddModelId(addableProviders[0]!.modelId);
+
+    const providerWithModels =
+      configuredProviders.find((provider) => modelsForProvider(provider.id).length > 0) ??
+      configuredProviders[0]!;
+    const providerValid = configuredProviders.some((provider) => provider.id === addProviderId);
+    const nextProviderId = providerValid ? addProviderId : providerWithModels.id;
+    const models = modelsForProvider(nextProviderId);
+    const modelValid = models.some((model) => model.id === addModelId);
+
+    if (nextProviderId !== addProviderId) {
+      setAddProviderId(nextProviderId);
     }
-  }, [addableProviders, addProviderId, addModelId]);
+    if (!modelValid) {
+      setAddModelId(models[0]?.id ?? "");
+    }
+  }, [configuredProviders, addProviderId, addModelId, modelsForProvider]);
 
   const hasPendingJobs = activeCall?.jobs.some(
     (job) => job.status === "pending" || job.status === "processing",
@@ -619,23 +627,25 @@ export function ReviewPanel() {
                     Fresh {PROVIDERS[REFERENCE_PROVIDER].name} reference
                   </Button>
 
-                  {addableProviders.length > 0 ? (
+                  {hasAddableSlot ? (
                     <>
-                      <Select value={addProviderId} onValueChange={setAddProviderId}>
+                      <Select
+                        value={addProviderId}
+                        onValueChange={(value) => {
+                          setAddProviderId(value);
+                          const models = modelsForProvider(value);
+                          setAddModelId(models[0]?.id ?? "");
+                        }}
+                      >
                         <SelectTrigger className="w-[160px]">
                           <SelectValue placeholder="Provider" />
                         </SelectTrigger>
                         <SelectContent>
-                          {[...new Set(addableProviders.map((item) => item.providerId))].map(
-                            (providerId) => {
-                              const provider = configuredProviders.find((p) => p.id === providerId);
-                              return (
-                                <SelectItem key={providerId} value={providerId}>
-                                  {provider?.name ?? providerId}
-                                </SelectItem>
-                              );
-                            },
-                          )}
+                          {configuredProviders.map((provider) => (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <Select value={addModelId} onValueChange={setAddModelId}>
@@ -643,19 +653,23 @@ export function ReviewPanel() {
                           <SelectValue placeholder="Model" />
                         </SelectTrigger>
                         <SelectContent>
-                          {addableProviders
-                            .filter((item) => item.providerId === addProviderId)
-                            .map((item) => (
-                              <SelectItem key={item.modelId} value={item.modelId}>
-                                {item.modelLabel}
-                              </SelectItem>
-                            ))}
+                          {modelsForProvider(addProviderId).map((model) => (
+                            <SelectItem key={model.id} value={model.id}>
+                              {model.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <Button
                         variant="secondary"
                         size="sm"
-                        disabled={addingProvider || refreshingReference || !addProviderId || !addModelId}
+                        disabled={
+                          addingProvider ||
+                          refreshingReference ||
+                          !addProviderId ||
+                          !addModelId ||
+                          modelsForProvider(addProviderId).length === 0
+                        }
                         onClick={() => void addProviderTranscript()}
                       >
                         {addingProvider ? (
@@ -668,7 +682,7 @@ export function ReviewPanel() {
                     </>
                   ) : (
                     <span className="text-xs text-zinc-500">
-                      No additional providers available — original providers are excluded.
+                      All provider/model combinations have been transcribed for this call.
                     </span>
                   )}
                 </div>
