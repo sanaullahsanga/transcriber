@@ -12,6 +12,9 @@ const FLUX_CHUNK_SIZE = 2560;
 const FLUX_CHUNK_DELAY_MS = 10;
 const FLUX_FINALIZE_DEBOUNCE_MS = 3_000;
 const FLUX_MIN_TIMEOUT_MS = 120_000;
+const FLUX_KEEPALIVE_INTERVAL_MS = 15_000;
+/** ~20ms of silent linear16 PCM — any binary frame resets Flux idle timers. */
+const FLUX_KEEPALIVE_PCM = Buffer.alloc(640);
 
 type FluxMessage = {
   type?: string;
@@ -163,6 +166,18 @@ async function transcribeFlux(
   }
 }
 
+function startFluxKeepalive(ws: WebSocket, shouldSendPcm: () => boolean): () => void {
+  const timer = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.ping();
+    if (shouldSendPcm()) {
+      ws.send(FLUX_KEEPALIVE_PCM);
+    }
+  }, FLUX_KEEPALIVE_INTERVAL_MS);
+
+  return () => clearInterval(timer);
+}
+
 async function transcribeFluxWebSocket(
   url: string,
   apiKey: string,
@@ -181,12 +196,14 @@ async function transcribeFluxWebSocket(
     let settled = false;
     let closeStreamSent = false;
     let finalizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopKeepalive: (() => void) | null = null;
 
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       if (finalizeTimer) clearTimeout(finalizeTimer);
+      stopKeepalive?.();
       fn();
     };
 
@@ -219,6 +236,8 @@ async function transcribeFluxWebSocket(
     }, fluxTimeoutMs(audio.length));
 
     ws.on("open", () => {
+      stopKeepalive = startFluxKeepalive(ws, () => !closeStreamSent);
+
       void (async () => {
         try {
           for (let i = 0; i < audio.length; i += FLUX_CHUNK_SIZE) {
@@ -237,6 +256,10 @@ async function transcribeFluxWebSocket(
           });
         }
       })();
+    });
+
+    ws.on("ping", () => {
+      ws.pong();
     });
 
     ws.on("message", (data) => {
