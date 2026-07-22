@@ -94,6 +94,47 @@ export async function prepareAudioForStt(
   };
 }
 
+/** Read 16 kHz mono linear16 PCM from any audio file via ffmpeg. */
+export function readLinear16Mono(inputPath: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-i",
+      inputPath,
+      "-f",
+      "s16le",
+      "-ac",
+      "1",
+      "-ar",
+      String(TARGET_SAMPLE_RATE),
+      "-",
+    ];
+
+    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    let stderr = "";
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on("error", (error) => {
+      reject(new Error(`ffmpeg not available: ${error.message}`));
+    });
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(chunks));
+        return;
+      }
+      reject(new Error(`ffmpeg failed (${code}): ${stderr.slice(-500)}`));
+    });
+  });
+}
+
 function guessMimeType(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
   const map: Record<string, string> = {

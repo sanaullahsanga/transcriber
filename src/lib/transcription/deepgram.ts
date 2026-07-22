@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { prepareAudioForStt } from "../audio/normalize";
+import WebSocket from "ws";
+import { prepareAudioForStt, readLinear16Mono } from "../audio/normalize";
 import { getMaxKeyterms } from "../keyterms";
 import { DEEPGRAM_FLUX_MODEL, isDeepgramFluxModel } from "../providers";
 import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } from "./types";
@@ -8,13 +9,18 @@ import type { TranscriptionInput, TranscriptionResult, TranscriptionProvider } f
 const DEEPGRAM_V1_LISTEN_URL = "https://api.deepgram.com/v1/listen";
 const DEEPGRAM_V2_LISTEN_URL = "wss://api.deepgram.com/v2/listen";
 const FLUX_CHUNK_SIZE = 2560;
+const FLUX_CHUNK_DELAY_MS = 10;
+const FLUX_CLOSE_GRACE_MS = 2_000;
 const FLUX_TIMEOUT_MS = 120_000;
 
-type FluxTurnInfo = {
+type FluxMessage = {
   type?: string;
   event?: string;
   transcript?: string;
   audio_window_end?: number;
+  code?: string;
+  description?: string;
+  message?: string;
 };
 
 function speakerLabels(speakers: (number | string)[]): Record<string | number, string> {
@@ -84,6 +90,14 @@ function appendKeyterms(params: URLSearchParams, keyterms: string[], model: stri
   }
 }
 
+function fluxErrorMessage(message: FluxMessage): string {
+  return [message.code, message.description, message.message].filter(Boolean).join(": ") || "Deepgram Flux error";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function transcribeFlux(
   input: TranscriptionInput,
   apiKey: string,
@@ -96,22 +110,18 @@ async function transcribeFlux(
   );
 
   try {
-    const params = new URLSearchParams({ model });
+    const params = new URLSearchParams({
+      model,
+      encoding: "linear16",
+      sample_rate: "16000",
+    });
     appendKeyterms(params, input.options.keyterms, model);
 
-    const audio = await readFile(prepared.filePath);
-    return await transcribeFluxWebSocket(`${DEEPGRAM_V2_LISTEN_URL}?${params}`, apiKey, audio);
+    const pcm = await readLinear16Mono(prepared.filePath);
+    return await transcribeFluxWebSocket(`${DEEPGRAM_V2_LISTEN_URL}?${params}`, apiKey, pcm);
   } finally {
     await prepared.cleanup?.();
   }
-}
-
-function openFluxSocket(url: string, apiKey: string): WebSocket {
-  return new WebSocket(url, {
-    headers: {
-      Authorization: `Token ${apiKey}`,
-    },
-  } as unknown as string[]);
 }
 
 async function transcribeFluxWebSocket(
@@ -120,17 +130,31 @@ async function transcribeFluxWebSocket(
   audio: Buffer,
 ): Promise<TranscriptionResult> {
   return new Promise((resolve, reject) => {
-    const ws = openFluxSocket(url, apiKey);
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: `Token ${apiKey}`,
+      },
+    });
 
     const turns: string[] = [];
     let durationMs: number | null = null;
     let settled = false;
+    let closeStreamSent = false;
+    let closeGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (closeGraceTimer) clearTimeout(closeGraceTimer);
       fn();
+    };
+
+    const resolveIfReady = () => {
+      if (!turns.length) return;
+      finish(() => {
+        resolve({ text: turns.join("\n\n"), durationMs });
+      });
     };
 
     const timeout = setTimeout(() => {
@@ -144,12 +168,16 @@ async function transcribeFluxWebSocket(
       });
     }, FLUX_TIMEOUT_MS);
 
-    ws.addEventListener("open", () => {
+    ws.on("open", () => {
       void (async () => {
         try {
           for (let i = 0; i < audio.length; i += FLUX_CHUNK_SIZE) {
             ws.send(audio.subarray(i, i + FLUX_CHUNK_SIZE));
+            if (FLUX_CHUNK_DELAY_MS > 0) {
+              await sleep(FLUX_CHUNK_DELAY_MS);
+            }
           }
+          closeStreamSent = true;
           ws.send(JSON.stringify({ type: "CloseStream" }));
         } catch (error) {
           ws.close();
@@ -160,37 +188,43 @@ async function transcribeFluxWebSocket(
       })();
     });
 
-    ws.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
+    ws.on("message", (data) => {
+      if (typeof data !== "string" && !Buffer.isBuffer(data)) return;
 
       try {
-        const message = JSON.parse(event.data) as FluxTurnInfo & { type?: string; message?: string };
+        const message = JSON.parse(String(data)) as FluxMessage;
         if (message.type === "Error") {
           ws.close();
           finish(() => {
-            reject(new Error(message.message ?? "Deepgram Flux error"));
+            reject(new Error(fluxErrorMessage(message)));
           });
           return;
         }
 
-        if (message.type !== "TurnInfo" || message.event !== "EndOfTurn") {
+        if (message.type !== "TurnInfo") {
           return;
         }
 
         const transcript = String(message.transcript ?? "").trim();
-        if (transcript) {
+        if (message.event === "EndOfTurn" && transcript) {
           turns.push(transcript);
         }
 
         if (typeof message.audio_window_end === "number") {
           durationMs = Math.round(message.audio_window_end * 1000);
         }
+
+        if (closeStreamSent && closeGraceTimer === null) {
+          closeGraceTimer = setTimeout(() => {
+            resolveIfReady();
+          }, FLUX_CLOSE_GRACE_MS);
+        }
       } catch {
         // Ignore malformed websocket payloads.
       }
     });
 
-    ws.addEventListener("close", () => {
+    ws.on("close", () => {
       finish(() => {
         if (turns.length) {
           resolve({ text: turns.join("\n\n"), durationMs });
@@ -200,9 +234,9 @@ async function transcribeFluxWebSocket(
       });
     });
 
-    ws.addEventListener("error", () => {
+    ws.on("error", (error) => {
       finish(() => {
-        reject(new Error("Deepgram Flux WebSocket error"));
+        reject(error instanceof Error ? error : new Error("Deepgram Flux WebSocket error"));
       });
     });
   });
